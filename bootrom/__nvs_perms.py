@@ -1,5 +1,4 @@
 # Higher-level driver for the NVS subsystem.
-from _mpy_shed.buffer_mp import AnyReadableBuf
 from esp32 import NVS
 
 # Forced RO permissions.

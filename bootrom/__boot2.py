@@ -79,6 +79,8 @@ _DEBUG_LED_GPIO = micropython.const(2)
 _DEBUG_FLASH_LONG_MS = micropython.const(1000)
 _DEBUG_FLASH_SHORT_MS = micropython.const(300)
 _DEBUG_FLASH_OFF_MS = micropython.const(200)
+_DEBUG_FLASH_IN_BETWEEN_MS = micropython.const(100)
+_DEBUG_FLASH_WAIT_MS = micropython.const(800)
 
 _SD_BOOT_BUTTON = micropython.const(0)
 
@@ -137,8 +139,13 @@ def _fatal_error_led(long_flashes: int, short_flashes: int, reboot: bool=False) 
     while True:
         for _ in range(0, long_flashes):
             flash_led(_DEBUG_FLASH_LONG_MS)
+
+        time.sleep_ms(_DEBUG_FLASH_IN_BETWEEN_MS)
+
         for _ in range(0, short_flashes):
             flash_led(_DEBUG_FLASH_SHORT_MS)
+
+        time.sleep_ms(_DEBUG_FLASH_WAIT_MS)
 
         if reboot:
             reset()
@@ -165,14 +172,14 @@ def _boot_clean_syspath() -> None:
 # X "dbx_len" (int): length of the dbx entry
 # - "nvs_lock" (int): disallow writes to the fields in this NVS
 # - "en_sd_boot" (int): allow booting from an SD card
-# - "en_insecure_boot" (int): disable signature validation and allow booting any payload
+# - "dis_sig_verif" (int): disable signature validation and allow booting any payload
 # - "boot_mpy" (int): look for firm_boot.mpy rather than firm_boot.bin when loading 
 #
 # NOTE: Pointer erased at boot lockout.
 def _boot_load_nvs(pubkey: RSA, uart_boot_on_fail: bool) -> ReadOnlyNVS:
     # Mask off the first 7 bytes (nvs names are limited to 15 bytes)
     nvs_uid = pubkey.n ^ int.from_bytes(unique_id(), "little") & 0x00FFFFFFFFFFFFFF
-    nvs_name = b"k" + hexlify(int.to_bytes(nvs_uid, 7, "little", signed=False))
+    nvs_name = b"k" + hexlify(int.to_bytes(nvs_uid, 7, "little"))
 
     logs.print_info("boot", f"loading boot nvs {nvs_name}")
     boot_nvs = ReadOnlyNVS(nvs_name.decode())
@@ -189,6 +196,7 @@ def _boot_load_nvs(pubkey: RSA, uart_boot_on_fail: bool) -> ReadOnlyNVS:
             _boot_launch_uart_rcm(pubkey, boot_nvs)
 
         # ERR_NON_INITIALIZED_NVS
+        logs.print_error("boot", "boot nvs uninitialized")
         _fatal_error_led(1, 2)
 
 
@@ -271,7 +279,7 @@ def _boot_launch_uart_rcm(pubkey: RSA, nvs: ReadOnlyNVS) -> NoReturn:
             continue
 
         # Process packet data
-        packet_cmd = int.from_bytes(payload_section[:2], 'little', signed=False)
+        packet_cmd = int.from_bytes(payload_section[:2], 'little')
         transport_layer_payload = payload_section[2:]
 
         # Should use a switch statement/LUT but ehh
@@ -398,7 +406,7 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> Non
             return False
         
     # Signature checks
-    disable_sig_checks = nvs.get_i32("en_insecure_boot") == 1 and not _FORCE_SIGNATURE_VALIDATION
+    disable_sig_checks = nvs.get_i32("dis_sig_verif") == 1 and not _FORCE_SIGNATURE_VALIDATION
 
     if disable_sig_checks:
         logs.print_warning("boot", "signature checking disabled! allowing insecure payloads")
@@ -631,8 +639,16 @@ def boot_main() -> None:
         
 
 try:
-    if __name__ == "__main__":
+    logs.print_info("boot", f"current script name: {__name__}")
+
+                                # TEMPORARY WORKAROUND!!!
+    if __name__ == "__main__" or __name__ == "__boot2":
         boot_main()
+    
+except Exception as ie:
+    logs.print_error("boot", "fatal error during bootrom execution")
+    sys.print_exception(ie)
+
 finally:
     # Unspecified bootrom error (catch all)
     _fatal_error_led(1, 6)
