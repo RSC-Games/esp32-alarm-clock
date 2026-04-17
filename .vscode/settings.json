@@ -1,0 +1,12 @@
+{
+    "python.analysis.exclude": [
+        "**/site-packages/**",
+        "**/lib/python*/**"
+    ],
+    "python.analysis.typeshedPaths": [
+        "headers"
+    ],
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportMissingModuleSource": "none"
+    },
+}
