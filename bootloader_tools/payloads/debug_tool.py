@@ -1,10 +1,17 @@
+from esp32 import Partition
 import micropython
+import vfs
 import sys
 import os
 import gc
 
 print("code exec pre entry")
 gc.collect()
+
+# initrd size:
+f_bsize, _, f_blocks, f_bfree, _, _, _, _, _, _ = os.statvfs("/initrd")
+
+print(f"initrd free/size: {f_bsize * f_bfree}/{f_bsize * f_blocks} B")
 
 def firm_entry(pubkey, nvs):
     print("have code exec post firm_entry")
@@ -26,6 +33,23 @@ def firm_entry(pubkey, nvs):
         print(f"{name} dir {dir(module)}")
 
     print(f"current root {os.listdir()}")
+
+    # mount flash for more debugging
+    # NOR boot mode
+    print("attempting nor flash mount")
+
+    data_partitions = Partition.find(Partition.TYPE_DATA, label="vfs")
+
+    if len(data_partitions) == 0:
+        # Partition unmountable (since it cannot be found)
+        print("cannot locate data partition")
+
+    try: 
+        vfs.mount(data_partitions[0], "/")
+    except OSError:
+        print("data partition corrupt/unmountable")
+
+    # NOR mount done
 
     print("done testing; entering fake repl")
 

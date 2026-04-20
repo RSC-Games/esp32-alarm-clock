@@ -1,3 +1,4 @@
+from ucrypto.ufastrsa.rsa import RSA
 from micropython import const
 from machine import unique_id
 from binascii import hexlify
@@ -7,12 +8,12 @@ import time
 
 _PRODUCT_ID = const(b"esp32_alarm_clock")
 _SERIAL_NUM = const(b"RALC0000000000001")
-_FIRMWARE_PATH = const(b"clock_firm")
+_FIRMWARE_PATH = const(b"recovery")#const(b"clock_firm")
 _VERSION = const(0) # Doesn't change
 _DBX = const(b"")
 _NVS_LOCKOUT = const(0)
-_ENABLE_SD_BOOT = const(1)
-_ALLOW_INSECURE_BOOT = const(0)
+_ENABLE_SD_BOOT = const(0)#const(1)
+_ALLOW_INSECURE_BOOT = const(1)#const(0)
 _BOOT_MPY = const(1)   # Booting a .bin sounds cooler but .mpy is easier to test.
 
 # Load the boot nvs. Key is the device unique id XOR the public key modulus.

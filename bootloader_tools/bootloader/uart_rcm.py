@@ -1,10 +1,9 @@
+import threading
 import binascii
-import platform
 import hashlib
 import struct
 import serial
 import time
-import os
 
 # USB/UART recovery bootloader (data link layer)
 _UART_RCM_CONN_RETRIES = 10
@@ -72,7 +71,7 @@ def _establish_connection(uart: serial.Serial) -> bool:
             pass
 
         if (uart.read(len(_UART_RCM_BANNER)) == _UART_RCM_BANNER):
-            print("sending ack")
+            print("\nsending connection request...")
             uart.write(_UART_RCM_CONN_ESTABLISHED)
             uart.flush()
             return True
@@ -83,6 +82,10 @@ def _establish_connection(uart: serial.Serial) -> bool:
 
 
 def _build_datalink_packet(flags: int, payload: bytes) -> bytearray:
+    """
+    Build a UART packet to send to the bootrom with the provided flags and payload.
+    """
+
     payload_sz = len(payload)
     header = struct.pack(_UART_RCM_HEADER, _UART_RCM_HEADER_PREFIX, flags, payload_sz + 4)
     data_packet = bytearray(_UART_RCM_HEADER_LEN + payload_sz + 4)
@@ -101,13 +104,8 @@ def _get_datalink_packet(uart: serial.Serial) -> tuple[int, bytes] | None:
     """
 
     # Wait for the header to be available.
-    #time.sleep(0.05)
-    #print(uart.read_all())
     header = uart.read(_UART_RCM_HEADER_LEN)
-
     header_magic, flags, size = struct.unpack(_UART_RCM_HEADER, header)
-
-    print(f"got flags {flags} size {size}")
 
     # Ensure valid header (can't really read anything with an illegal header)
     # NOTE: This will spam packets to the host until the payload is fully transferred
@@ -139,7 +137,8 @@ def _get_datalink_packet(uart: serial.Serial) -> tuple[int, bytes] | None:
 
 def endpoint_reset(uart: serial.Serial) -> None:
     """
-    Reset the device. EN is active low.
+    Reset the device. EN is active low. Prevent the device from resetting into ESP-IDF
+    download boot mode.
     """
     uart.dtr = False
     uart.rts = True
@@ -198,7 +197,7 @@ def bootrom_is_ready(uart: serial.Serial) -> bool:
     
     flags, payload = res
 
-    print(f"flags {flags} payload {payload}")
+    print(f"response: flags {flags} payload {payload}")
 
     return flags & _UART_RCM_FLAG_READY != 0
 
@@ -211,11 +210,36 @@ def boot_payload(uart: serial.Serial, payload_path: str) -> bool:
     firm_array[:2] = int.to_bytes(2, 2, "little")
     firm_array[2 + 512:] = firm_bytes
 
-    print(hashlib.sha256(firm_bytes).hexdigest())
-    print(f"payload len {len(firm_array[2+512:])} B")
+    print(f"injecting payload sha256 {hashlib.sha256(firm_bytes).hexdigest()} len {len(firm_array[2+512:])} B")
 
     packet = _build_datalink_packet(0, firm_array)
     uart.write(packet)
 
     #print(bootrom_is_ready(uart))
     return False
+
+
+def run_user_connection_tool(rcm: serial.Serial):
+    """
+    Allow the user to directly send bytes from the keyboard to the connected
+    device. Useful for using a REPL or serial port after booting a payload.
+
+    :param rcm: Device to connect to.
+    """
+
+    def do_write_pipe():
+        try:
+            while True:
+                in_text = input()
+                rcm.write(in_text.encode() + b"\n")
+        except EOFError:
+            return
+
+    thread = threading.Thread(target=do_write_pipe, daemon=True)
+    thread.start()
+
+    try:
+        while True:
+            print(rcm.read(1).decode(errors="replace"), end='', flush=True)
+    except KeyboardInterrupt:
+        print("connection terminated")
