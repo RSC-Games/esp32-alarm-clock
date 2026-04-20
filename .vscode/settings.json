@@ -4,9 +4,14 @@
         "**/lib/python*/**"
     ],
     "python.analysis.typeshedPaths": [
-        "headers"
+        "headers",
+        "headers/stdlib",
+        "./bootrom"
     ],
     "python.analysis.diagnosticSeverityOverrides": {
         "reportMissingModuleSource": "none"
     },
+    "python.analysis.extraPaths": [
+        "./headers",
+    ],
 }

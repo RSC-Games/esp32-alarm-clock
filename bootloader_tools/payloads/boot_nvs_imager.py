@@ -2,8 +2,9 @@ from micropython import const
 from machine import unique_id
 from binascii import hexlify
 from esp32 import NVS
+import logs
+import time
 
-_PUBKEY_PUBLIC_MODULUS = const(0)
 _PRODUCT_ID = const(b"esp32_alarm_clock")
 _SERIAL_NUM = const(b"RALC0000000000001")
 _FIRMWARE_PATH = const(b"clock_firm")
@@ -32,13 +33,13 @@ _BOOT_MPY = const(1)   # Booting a .bin sounds cooler but .mpy is easier to test
 #
 # NOTE: Pointer erased at boot lockout.
 # THIS FUNCTION IS NOT USEFUL AS LONG AS A PUBLIC KEY DOES NOT EXIST!!!
-def format_boot_nvs():
+def format_boot_nvs(pubkey: RSA, nvs: NVS):
     # TODO: public key not known; nvs pointer will be incorrect
-    nvs_uid = _PUBKEY_PUBLIC_MODULUS ^ int.from_bytes(unique_id(), "little") & 0x00FFFFFFFFFFFFFF
+    nvs_uid = pubkey.n ^ int.from_bytes(unique_id(), "little") & 0x00FFFFFFFFFFFFFF
     nvs_name = b"k" + hexlify(int.to_bytes(nvs_uid, 7, "little"))
 
     boot_nvs = NVS(nvs_name.decode())
-    print("setting up boot nvs")
+    logs.print_warning("nvs-init", "setting up boot nvs")
 
     boot_nvs.set_blob("prod_id", _PRODUCT_ID)
     boot_nvs.set_i32("prod_id_len", len(_PRODUCT_ID))
@@ -53,8 +54,12 @@ def format_boot_nvs():
     boot_nvs.set_i32("en_sd_boot", _ENABLE_SD_BOOT)
     boot_nvs.set_i32("dis_sig_verif", _ALLOW_INSECURE_BOOT)
     boot_nvs.set_i32("boot_mpy", _BOOT_MPY)
+    boot_nvs.commit()
 
-    print("boot nvs initialized")
+    logs.print_warning("nvs-init", "boot nvs initialized")
+    time.sleep(1)
 
-if __name__ == "__main__":
-    format_boot_nvs()
+
+def firm_entry(pubkey, nvs):
+    logs.print_warning("nvs-init", "FLASHING NVS")
+    format_boot_nvs(pubkey, nvs)

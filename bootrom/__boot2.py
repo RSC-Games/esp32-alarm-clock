@@ -8,11 +8,13 @@
 # esp secure boot (to prevent overwriting the interpreter ROM). Additionally,
 # NVS lockout isn't fully hardened and would require modification to the mpy
 # NVS driver (to prevent accessing the app NVS) to fully lock down. 
+#
+# NOTE: This bootloader is vulnerable to an escape-by-sys.exit() call
 
 # NOTE: performing initial lockout (can be disabled in the mpy firmware). Idea
 # is to prevent circumventing the secure boot chain with a keyboard interrupt.
 import micropython
-micropython.kbd_intr(-1)
+#micropython.kbd_intr(-1)
 
 from machine import reset, unique_id, Pin
 from ucrypto.ufastrsa.rsa import RSA
@@ -42,7 +44,6 @@ _FORCE_DISABLE_SD_BOOT = micropython.const(False)
 ################################## END CONFIGURATION ####################################
 
 # USB/UART recovery bootloader (data link layer)
-_UART_RCM_DEFAULT_BAUD = micropython.const(115200)
 _UART_RCM_CONN_RETRIES = micropython.const(10)
 _UART_RCM_BANNER = micropython.const(b"\x55BOOT_RCM_RSC\xAA")
 _UART_RCM_CONN_ESTABLISHED = micropython.const(b"\xAARSC_RCM_BOOT\x55")
@@ -56,8 +57,8 @@ _UART_RCM_CONN_ESTABLISHED = micropython.const(b"\xAARSC_RCM_BOOT\x55")
 # - 2 byte length field (payload size + 4 bytes crc32)
 # - n - 4 bytes data payload
 # - 4 bytes crc32
-_UART_RCM_HEADER = micropython.const("4s<H<H")
-_UART_RCM_PACKET = micropython.const("6s<{}s<I")
+_UART_RCM_HEADER = micropython.const("<4sHH")
+_UART_RCM_PACKET = micropython.const("<8s{}sI")
 _UART_RCM_HEADER_PREFIX = micropython.const(b"\x64RCM")
 _UART_RCM_FLAG_READY = micropython.const(0x80)
 _UART_RCM_FLAG_COMMAND_ERROR = micropython.const(0x4)
@@ -76,10 +77,10 @@ _UART_RCM_CMD_BOOT = micropython.const(2)
 
 # Error reporting
 _DEBUG_LED_GPIO = micropython.const(2)
-_DEBUG_FLASH_LONG_MS = micropython.const(1000)
-_DEBUG_FLASH_SHORT_MS = micropython.const(300)
-_DEBUG_FLASH_OFF_MS = micropython.const(200)
-_DEBUG_FLASH_IN_BETWEEN_MS = micropython.const(100)
+_DEBUG_FLASH_LONG_MS = micropython.const(750)
+_DEBUG_FLASH_SHORT_MS = micropython.const(225)
+_DEBUG_FLASH_OFF_MS = micropython.const(150)
+_DEBUG_FLASH_IN_BETWEEN_MS = micropython.const(250)
 _DEBUG_FLASH_WAIT_MS = micropython.const(800)
 
 _SD_BOOT_BUTTON = micropython.const(0)
@@ -127,8 +128,11 @@ _SD_BUS_CS = micropython.const(15)
 #   1 short: exception in firmware; stack dumped, rebooting
 #
 # This function is NOT erased at boot lockout.
-def _fatal_error_led(long_flashes: int, short_flashes: int, reboot: bool=False) -> NoReturn:
+def _fatal_error_led(pubkey: RSA | None, boot_nvs: ReadOnlyNVS | None, long_flashes: int, 
+                     short_flashes: int, reboot: bool=False) -> NoReturn:
+    
     led_internal = Pin(_DEBUG_LED_GPIO, Pin.OUT)
+    boot_button = Pin(_SD_BOOT_BUTTON, Pin.IN, Pin.PULL_UP)
 
     def flash_led(delay_ms_on: int) -> None:
         led_internal.on()
@@ -147,8 +151,14 @@ def _fatal_error_led(long_flashes: int, short_flashes: int, reboot: bool=False) 
 
         time.sleep_ms(_DEBUG_FLASH_WAIT_MS)
 
+        # Since uart_rcm also calls here, avoid a technical infinite loop.
         if reboot:
             reset()
+
+        # Allow USB recovery at all times rather than just when SD boot
+        # is disabled.
+        if pubkey is not None and boot_nvs is not None and boot_button.value() == 0:
+            _boot_launch_uart_rcm(pubkey, boot_nvs)
 
 
 # Avoid accidentally importing any unverified files on the raw filesystem
@@ -170,13 +180,10 @@ def _boot_clean_syspath() -> None:
 # - "version" (int): version id of the firmware image to load
 # X "dbx" (blob): contains blacklisted hashes (not currently used)
 # X "dbx_len" (int): length of the dbx entry
-# - "nvs_lock" (int): disallow writes to the fields in this NVS
-# - "en_sd_boot" (int): allow booting from an SD card
-# - "dis_sig_verif" (int): disable signature validation and allow booting any payload
-# - "boot_mpy" (int): look for firm_boot.mpy rather than firm_boot.bin when loading 
+# - "nvs_lock" (int): disallow writesoot.mpy rather than firm_boot.bin when loading 
 #
 # NOTE: Pointer erased at boot lockout.
-def _boot_load_nvs(pubkey: RSA, uart_boot_on_fail: bool) -> ReadOnlyNVS:
+def _boot_load_nvs(pubkey: RSA) -> ReadOnlyNVS:
     # Mask off the first 7 bytes (nvs names are limited to 15 bytes)
     nvs_uid = pubkey.n ^ int.from_bytes(unique_id(), "little") & 0x00FFFFFFFFFFFFFF
     nvs_name = b"k" + hexlify(int.to_bytes(nvs_uid, 7, "little"))
@@ -192,12 +199,9 @@ def _boot_load_nvs(pubkey: RSA, uart_boot_on_fail: bool) -> ReadOnlyNVS:
         return boot_nvs
 
     except OSError:
-        if uart_boot_on_fail:
-            _boot_launch_uart_rcm(pubkey, boot_nvs)
-
         # ERR_NON_INITIALIZED_NVS
         logs.print_error("boot", "boot nvs uninitialized")
-        _fatal_error_led(1, 2)
+        _fatal_error_led(pubkey, boot_nvs, 1, 2)
 
 
 # Launch the recovery mode listener on UART0. Log messages will no
@@ -205,32 +209,55 @@ def _boot_load_nvs(pubkey: RSA, uart_boot_on_fail: bool) -> ReadOnlyNVS:
 #
 # NOTE: Pointer erased at boot lockout.
 def _boot_launch_uart_rcm(pubkey: RSA, nvs: ReadOnlyNVS) -> NoReturn:
-    from machine import UART
+    from select import poll, POLLIN
+    from io import BytesIO
     import struct
 
     logs.print_info("boot", "entered USB/UART recovery mode boot mode")
 
-    sys.stdout.flush()
-    rcm_pipe = UART(0, baudrate=_UART_RCM_DEFAULT_BAUD)
+    rcm_pipe_in = sys.stdin.buffer
+    rcm_pipe_out = sys.stdout.buffer
     connected = False
 
+    # Stdin can't poll itself (and stdin/stdout actively prevents directly using
+    # the UART)
+    read_poll = poll()
+    read_poll.register(rcm_pipe_in, POLLIN)
+
+    def get_n_bytes(n: int, timeout_ms: int) -> bytes:
+        in_buf = BytesIO()
+        buf_len = 0
+
+        end_time = time.ticks_add(time.ticks_ms(), timeout_ms)
+
+        while (timeout_ms == -1 or time.ticks_diff(time.ticks_ms(), end_time) < 0) and buf_len < n:
+            if len(read_poll.poll(1)) != 0:
+                char = rcm_pipe_in.read(1)
+                in_buf.write(char)
+                buf_len += 1
+
+        return in_buf.getvalue()
+        
     # Announce startup to connected device (if any)
     for _ in range(0, _UART_RCM_CONN_RETRIES):
-        rcm_pipe.write(_UART_RCM_BANNER)
-        time.sleep_ms(100)
+        rcm_pipe_out.write(_UART_RCM_BANNER)
         
         # Wait for the connection accepted flag (if it exists)
-        if rcm_pipe.any() < len(_UART_RCM_CONN_ESTABLISHED):
-            continue
+        read_chars = get_n_bytes(len(_UART_RCM_CONN_ESTABLISHED), 500)
+
+        #if read_chars != b"":
+        #    logs.print_info("boot", f"got chars {read_chars} wants {_UART_RCM_CONN_ESTABLISHED}")
 
         # Connection accepted
-        if rcm_pipe.read(len(_UART_RCM_CONN_ESTABLISHED)) == _UART_RCM_CONN_ESTABLISHED:
+        if read_chars == _UART_RCM_CONN_ESTABLISHED:
             connected = True
             break
 
     if not connected:
         # Fatal: no pc connection
-        _fatal_error_led(4, 1, reboot=True)
+        print()
+        logs.print_warning("boot", "connection to pc failed; rebooting")
+        _fatal_error_led(None, None, 4, 1, reboot=True)
 
     # Command packet parser.
     header_sz = struct.calcsize(_UART_RCM_HEADER)
@@ -241,24 +268,34 @@ def _boot_launch_uart_rcm(pubkey: RSA, nvs: ReadOnlyNVS) -> NoReturn:
         data_packet = bytearray(header_sz + payload_sz + 4)
 
         struct.pack_into(_UART_RCM_PACKET.format(payload_sz), data_packet, 0, header, payload, 0)
-        struct.pack_into("<I", data_packet, header_sz + payload_sz, crc32(data_packet))
+        #print(f"packet pre crc: {data_packet} ")
+        crc = crc32(data_packet)
+        struct.pack_into("<I", data_packet, header_sz + payload_sz, crc)
+        #print(f"crc32 for the above packet {crc} ")
         return data_packet
+    
+    # Finish 3 way handshake
+    conn_packet = build_packet(_UART_RCM_FLAG_READY, b"CONNECTION_READY")
+    #print(f"connection packet {conn_packet} ")
+    rcm_pipe_out.write(conn_packet)
+    del conn_packet
 
     while True:
         # Wait for the header to be available.
-        if rcm_pipe.any() < header_sz:
-            continue
+        header = get_n_bytes(header_sz, -1)
 
-        header_magic, flags, size = struct.unpack(_UART_RCM_HEADER, rcm_pipe.read(header_sz))
+        header_magic, flags, size = struct.unpack(_UART_RCM_HEADER, header)
 
         # Ensure valid header (can't really read anything with an illegal header)
         # NOTE: This will spam packets to the host until the payload is fully transferred
         # unless transmission is cut off early.
         if header_magic != _UART_RCM_HEADER_PREFIX:
             err_packet = build_packet(_UART_RCM_FLAG_INVALID_PACKET, b"BAD_HEADER")
-            rcm_pipe.write(err_packet)
-            rcm_pipe.flush()
+            rcm_pipe_out.write(err_packet)
             continue
+
+        # TODO: BOOTROM CRASH POSSIBLE (packet length not validated). Max payload size is
+        # 32 kB
 
         # NOTE: Flags are a DONT CARE (ignore them)
         # Read the rest of the packet payload.
@@ -268,19 +305,18 @@ def _boot_launch_uart_rcm(pubkey: RSA, nvs: ReadOnlyNVS) -> NoReturn:
         struct.pack_into(_UART_RCM_HEADER, packet, 0, header_magic, flags, size)
 
         # Ensure CRC section is zeroed
-        rcm_pipe.readinto(payload_section, size - 4) 
-        recv_crc = rcm_pipe.read(4)
+        rcm_pipe_in.readinto(payload_section, size - 4) 
+        recv_crc = int.from_bytes(rcm_pipe_in.read(4), "little")
 
         # Ensure packet hasn't been corrupted during transfer.
         if crc32(packet) != recv_crc:
             err_packet = build_packet(_UART_RCM_FLAG_CORRUPT_PACKET, b"BAD_CRC")
-            rcm_pipe.write(err_packet)
-            rcm_pipe.flush()
+            rcm_pipe_out.write(err_packet)
             continue
 
         # Process packet data
         packet_cmd = int.from_bytes(payload_section[:2], 'little')
-        transport_layer_payload = payload_section[2:]
+        transport_layer_payload = payload_section[2:-4]
 
         # Should use a switch statement/LUT but ehh
         if packet_cmd == _UART_RCM_CMD_BOOT:  # BOOT_FIRM
@@ -288,15 +324,13 @@ def _boot_launch_uart_rcm(pubkey: RSA, nvs: ReadOnlyNVS) -> NoReturn:
 
             if not valid:
                 err_packet = build_packet(_UART_RCM_FLAG_COMMAND_ERROR, b"BAD_SIGNATURE")
-                rcm_pipe.write(err_packet)
-                rcm_pipe.flush()
+                rcm_pipe_out.write(err_packet)
 
             # Won't ever return if the signature is valid.
 
         else:
-            err_packet = build_packet(_UART_RCM_FLAG_COMMAND_ERROR, b"E_INVAL")
-            rcm_pipe.write(err_packet)
-            rcm_pipe.flush()
+            err_packet = build_packet(_UART_RCM_FLAG_COMMAND_ERROR, f"E_INVAL:{packet_cmd}".encode())
+            rcm_pipe_out.write(err_packet)
 
 
 # Execute a signed firmware file (not a firmware image, just a raw signed .mpy)
@@ -304,28 +338,76 @@ def _boot_launch_uart_rcm(pubkey: RSA, nvs: ReadOnlyNVS) -> NoReturn:
 # TODO: Use ECDSA and ASN.1 encode signatures
 # NOTE: Pointer erased at boot lockout.
 def _boot_exec_signed_firm(pubkey: RSA, nvs: ReadOnlyNVS, sig: memoryview[int], bin: memoryview[int]) -> bool:
+    from vfs import VfsFat, umount
     from hashlib import sha256
+    from math import ceil
 
-    sig_hash = pubkey.pkcs_verify(sig)
+    # sig_hash = pubkey.pkcs_verify(sig)
     bin_hash = sha256(bin).digest()
 
-    # Invalid binary; refuse to boot it.
-    if bin_hash != sig_hash:
-        return False
+    # # Invalid binary; refuse to boot it.
+    # if bin_hash != sig_hash:
+    #     return False
+
+    # TODO: Smaller, cleaner, fake vfs object (to return the bin only)
+    class RAMBlockDev:
+        def __init__(self, block_size, num_blocks):
+            self.block_size = block_size
+            self.data = bytearray(block_size * num_blocks)
+
+        def readblocks(self, block_num, buf, offset=0):
+            for i in range(len(buf)):
+                buf[i] = self.data[block_num * self.block_size + i]
+            return True
+
+        def writeblocks(self, block_num, buf, offset=0):
+            for i in range(len(buf)):
+                self.data[block_num * self.block_size + i] = buf[i]
+
+        def ioctl(self, op, arg=0):
+            if op == 4: # get number of blocks
+                return len(self.data) // self.block_size
+            if op == 5: # get block size
+                return self.block_size
     
     logs.print_info("boot", f"signature valid. booting payload sha256 {hexlify(bin_hash)}")
-    sys.stdout.flush()
     gc.collect()
 
     _boot_lockout(nvs, False)
 
+    # TODO: FAR FAR BETTER CODE REQUIRED (just trying to make it bootable)
+    ram_boot_dev = RAMBlockDev(512, 64)
+    VfsFat.mkfs(ram_boot_dev)
+    mount(ram_boot_dev, "/initrd")
+    f = open("/initrd/firm_boot.mpy", "wb")
+    f.write(bin)
+    f.close()
+
     # Execute payload with no environment (security; NOTE: do we need it for signed firm booting?)
     # App does require access to the boot NVS.
     try:
-        exec(bin, {"boot_nvs": nvs}, {})
-    except Exception:
+        sys.path.append("/initrd")
+        import firm_boot
+        sys.path.remove("/initrd")
+        umount("/initrd")
+        del ram_boot_dev
+        
+        #exec(bin, {"boot_nvs": nvs}, {}) # secure
+        #exec(bin, globals()) # INSECURE; required for testing
+
+        # Payload must have a function (firm_entry) taking the public key and nvs as an argument
+        # (mostly for static type analysis reasons). This should never return.
+        if hasattr(firm_boot, "firm_entry") and callable(firm_boot.firm_entry):
+            firm_boot.firm_entry(pubkey, nvs)
+        else:
+            logs.print_error("boot", "payload not executable")
+            _fatal_error_led(None, None, 4, 2, reboot=True)
+        
+    except Exception as ie:
         # Payload execution error
-        _fatal_error_led(4, 2, reboot=True)
+        logs.print_error("boot", "payload exec failed")
+        sys.print_exception(ie)
+        _fatal_error_led(None, None, 4, 2, reboot=True)
 
     # Payload finished executing.
     reset()
@@ -334,7 +416,7 @@ def _boot_exec_signed_firm(pubkey: RSA, nvs: ReadOnlyNVS, sig: memoryview[int], 
 # Mount the NOR as the root filesystem unless SD boot has been enabled.
 #
 # NOTE: Pointer erased at boot lockout.
-def _boot_mount_root(boot_from_sd: bool) -> None:
+def _boot_mount_root(pubkey: RSA, nvs: ReadOnlyNVS, boot_from_sd: bool) -> None:
     if boot_from_sd:
         from machine import SDCard
 
@@ -354,13 +436,13 @@ def _boot_mount_root(boot_from_sd: bool) -> None:
             )
         except OSError:
             logs.print_error("boot", "sd card unreadable/not present")
-            _fatal_error_led(1, 4)
+            _fatal_error_led(pubkey, nvs, 1, 4)
 
         try:
             mount(sd, "/")
         except OSError:
             logs.print_error("boot", "sd card unmountable/corrupt")
-            _fatal_error_led(1, 5)
+            _fatal_error_led(pubkey, nvs, 1, 5)
 
         # SD mount done
 
@@ -375,13 +457,13 @@ def _boot_mount_root(boot_from_sd: bool) -> None:
         if len(data_partitions) == 0:
             # Partition unmountable (since it cannot be found)
             logs.print_error("boot", "cannot locate data partition")
-            _fatal_error_led(1, 3)
+            _fatal_error_led(pubkey, nvs, 1, 3)
 
         try: 
             mount(data_partitions[0], "/")
         except OSError:
             logs.print_error("boot", "data partition corrupt/unmountable")
-            _fatal_error_led(1, 3)
+            _fatal_error_led(pubkey, nvs, 1, 3)
 
         # NOR mount done
 
@@ -418,12 +500,12 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> Non
     # Look for our firm
     if not exists(firm_name):
         logs.print_error("boot", "missing firmware image")
-        _fatal_error_led(flashes, 1)
+        _fatal_error_led(pubkey, nvs, flashes, 1)
 
     # Find the signature
     if not disable_sig_checks and not exists(firm_sig):
         logs.print_error("boot", "missing firmware signature")
-        _fatal_error_led(flashes, 2)
+        _fatal_error_led(pubkey, nvs, flashes, 2)
 
     firm_f = open(firm_name, "rb")
 
@@ -441,7 +523,7 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> Non
         # later)
         if len(sig) != 512:
             logs.print_error("boot", "corrupt/malformed signature")
-            _fatal_error_led(flashes, 2)
+            _fatal_error_led(pubkey, nvs, flashes, 2)
 
         firm_buffer = memoryview(bytearray(64))
         firm_hasher = sha256()
@@ -470,11 +552,11 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> Non
             # TODO: DBX is not checked. (error flash 2/3, 4)
         except:
             logs.print_error("boot", "invalid pkcs#1 signature")
-            _fatal_error_led(flashes, 2)
+            _fatal_error_led(pubkey, nvs, flashes, 2)
 
         if not hashes_equal:
             logs.print_error("boot", "signature validation failed")
-            _fatal_error_led(flashes, 2)
+            _fatal_error_led(pubkey, nvs, flashes, 2)
 
     # Mount firm (sig checks probably passed)
     # NOTE: Reusing buffer to avoid possible TOCTOU vulnerability
@@ -483,7 +565,7 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> Non
         mount(firm_bdev, "/firm", readonly=True)
     except OSError:
         logs.print_error("boot", "failed to mount firmware")
-        _fatal_error_led(flashes, 5)
+        _fatal_error_led(pubkey, nvs, flashes, 5)
 
     # Anti-downgrade firmware check.
     # NOTE: /firm/version is a single-line file with only a 4 byte number contained inside.
@@ -492,7 +574,7 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> Non
 
         if not exists("/firm/version"):
             logs.print_error("boot", "no version info found")
-            _fatal_error_led(flashes, 3)
+            _fatal_error_led(pubkey, nvs, flashes, 3)
 
         firm_ver_f = open("/firm/version", "r")
         firm_version = int(firm_ver_f.read().strip())
@@ -501,7 +583,7 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> Non
         # Firmware is older than what was last booted.
         if firm_version < last_booted_ver:
             logs.print_error("boot", "found firmware older than installed")
-            _fatal_error_led(flashes, 3)
+            _fatal_error_led(pubkey, nvs, flashes, 3)
 
         # Ensure nvs version is up to date (especially after a firmware update)
         if firm_version > last_booted_ver:
@@ -517,7 +599,7 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> Non
 # for custom code)
 #
 # NOTE: Pointer erased at boot lockout.
-def _boot_read_firm_file(nvs: ReadOnlyNVS) -> bytes:
+def _boot_read_firm_file(pubkey: RSA, nvs: ReadOnlyNVS) -> bytes:
     boot_mpy = nvs.get_i32("boot_mpy")
 
     try:
@@ -526,7 +608,7 @@ def _boot_read_firm_file(nvs: ReadOnlyNVS) -> bytes:
         firm_file.close()
     except OSError:
         logs.print_error("boot", "unable to launch firmware")
-        _fatal_error_led(2, 6)
+        _fatal_error_led(pubkey, nvs, 2, 6)
 
     return firm_bin
 
@@ -563,7 +645,7 @@ def _boot_lockout(nvs: ReadOnlyNVS, nvs_lockout=True) -> None:
     boot_main = _boot_func_stub
 
     # Force NVS read-only to all payloads.
-    if (_FORCE_NVS_LOCKOUT or nvs.get_i32("nvs_lock")) and nvs_lockout:
+    if nvs_lockout and (_FORCE_NVS_LOCKOUT or nvs.get_i32("nvs_lock")):
         nvs._lockout()
 
     # Prepare for entry into firm code (clean up memory)
@@ -592,13 +674,13 @@ def boot_main() -> None:
     # Security engine initialization already performed (see imports)
     # Private key provides n, e, d; public key only requires n, e.
     # TODO: Generate a key 
-    pubkey = RSA(4096, 0, 0)
+    pubkey = RSA(4096, 1, 1)
 
     # Determine boot mode (NOR or UART/SD)
     boot_pressed = Pin(_SD_BOOT_BUTTON, Pin.IN, Pin.PULL_UP).value() == 0
 
     # Attempt to load the boot config nvs.
-    boot_nvs = _boot_load_nvs(pubkey, boot_pressed)
+    boot_nvs = _boot_load_nvs(pubkey)
 
     # Determine boot mode, and only allow SD boot if the BOOT button is pressed.
     sd_boot_enabled = boot_nvs.get_i32("en_sd_boot") == 1
@@ -610,11 +692,11 @@ def boot_main() -> None:
     if (_FORCE_DISABLE_SD_BOOT or not sd_boot_enabled) and boot_pressed:
         _boot_launch_uart_rcm(pubkey, boot_nvs) # does not return
 
-    _boot_mount_root(sd_boot)
+    _boot_mount_root(pubkey, boot_nvs, sd_boot)
     _boot_validate_firmware(pubkey, boot_nvs, sd_boot)
 
     # Load firm_boot.bin and execute it.
-    firm_bin = _boot_read_firm_file(boot_nvs)
+    firm_bin = _boot_read_firm_file(pubkey, boot_nvs)
 
     # Isolate secure bootloader scope.
     _boot_lockout(boot_nvs)
@@ -635,14 +717,11 @@ def boot_main() -> None:
 
     finally:
         # Application error (should never return)
-        _fatal_error_led(5, 1, reboot=True)
+        _fatal_error_led(pubkey, boot_nvs, 5, 1, reboot=True)
         
 
 try:
-    logs.print_info("boot", f"current script name: {__name__}")
-
-                                # TEMPORARY WORKAROUND!!!
-    if __name__ == "__main__" or __name__ == "__boot2":
+    if __name__ == "__main__":
         boot_main()
     
 except Exception as ie:
@@ -651,5 +730,5 @@ except Exception as ie:
 
 finally:
     # Unspecified bootrom error (catch all)
-    _fatal_error_led(1, 6)
+    _fatal_error_led(None, None, 1, 6)
         

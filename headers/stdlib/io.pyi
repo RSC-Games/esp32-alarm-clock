@@ -246,6 +246,55 @@ class BytesIO:
              This constructor is a MicroPython extension.
         """
 
+    def read(self, size=-1) -> AnyReadableBuf:
+        """
+        Read and return up to size bytes. If the argument is omitted, None, or negative read as 
+        much as possible.
+
+        Fewer bytes may be returned than requested. An empty bytes object is returned if the 
+        stream is already at EOF. More than one read may be made and calls may be retried if 
+        specific errors are encountered, see os.read() and PEP 475 for more details. Less than 
+        size bytes being returned does not imply that EOF is imminent.
+
+        When reading as much as possible the default implementation will use raw.readall if available 
+        (which should implement RawIOBase.readall()), otherwise will read in a loop until read returns 
+        None, an empty bytes, or a non-retryable error. For most streams this is to EOF, but for 
+        non-blocking streams more data may become available.
+
+        Note: When the underlying raw stream is non-blocking, implementations may either raise BlockingIOError
+        or return None if no data is available. io implementations return None. 
+        """
+        
+    def readinto(self, b: AnyWritableBuf) -> int:
+        """
+        Read bytes into a pre-allocated, writable bytes-like object b and return the number of bytes read. For 
+        example, b might be a bytearray.
+
+        Like read(), multiple reads may be issued to the underlying raw stream, unless the latter is interactive.
+
+        A BlockingIOError is raised if the underlying raw stream is in non blocking-mode, and has no data 
+        available at the moment.
+        """
+
+    def write(self, b: AnyReadableBuf) -> None:
+        """
+        Write the given bytes-like object, b, and return the number of bytes written (always equal to the length 
+        of b in bytes, since if the write fails an OSError will be raised). Depending on the actual implementation, 
+        these bytes may be readily written to the underlying stream, or held in a buffer for performance and latency 
+        reasons.
+
+        When in non-blocking mode, a BlockingIOError is raised if the data needed to be written to the raw stream 
+        but it couldn’t accept all the data without blocking.
+
+        The caller may release or mutate b after this method returns, so the implementation should only access b 
+        during the method call.
+        """
+
+    def getvalue(self) -> bytes:
+        """
+        Get the current contents of the underlying buffer which holds data.
+        """
+
 @overload
 def open(name: _OpenFile, /, **kwargs) -> TextIOWrapper:
     """

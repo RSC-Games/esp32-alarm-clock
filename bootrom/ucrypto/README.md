@@ -1,0 +1,1 @@
+Forked from dmazzella/ucrypto to fix some potential vulnerabilities (opt=3 strips asserts)
