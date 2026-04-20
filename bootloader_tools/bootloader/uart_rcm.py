@@ -141,7 +141,7 @@ def endpoint_reset(uart: serial.Serial) -> None:
     """
     Reset the device. EN is active low.
     """
-    uart.dtr = True
+    uart.dtr = False
     uart.rts = True
     time.sleep(0.1)
     uart.rts = False
@@ -211,10 +211,8 @@ def boot_payload(uart: serial.Serial, payload_path: str) -> bool:
     firm_array[:2] = int.to_bytes(2, 2, "little")
     firm_array[2 + 512:] = firm_bytes
 
-    print(firm_bytes)
     print(hashlib.sha256(firm_bytes).hexdigest())
-    print(hashlib.sha256(firm_array[2+512:]).hexdigest())
-    print(len(firm_array[2+512:]))
+    print(f"payload len {len(firm_array[2+512:])} B")
 
     packet = _build_datalink_packet(0, firm_array)
     uart.write(packet)
