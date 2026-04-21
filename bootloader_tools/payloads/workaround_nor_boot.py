@@ -154,10 +154,13 @@ def _boot_mount_root(pubkey: RSA, nvs: ReadOnlyNVS, boot_from_sd: bool) -> None:
 # SD boot has a different flash code set (but is otherwise functionally
 # identical).
 #
+# Returns none if firmware validation and mounting was successful; otherwise
+# returns the error code.
+#
 # NOTE: Pointer erased at boot lockout.
-def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> None:
+def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, firm_name: str, sd_boot: bool) -> tuple[int, int] | None:
     from __firmimg import FirmwareImage
-    from vfs import mount
+    from vfs import mount, umount
     import os
 
     # Error reporting
@@ -176,19 +179,18 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> Non
     if disable_sig_checks:
         logs.print_warning("firm", "signature checking disabled! allowing insecure payloads")
 
-    firm_name = f"{nvs.get_str("firm")}.img"
     firm_sig = f"{firm_name}.sig"
     logs.print_info("firm", f"loading firmware image {firm_name}")
 
     # Look for our firm
     if not exists(firm_name):
         logs.print_error("firm", "missing firmware image")
-        _fatal_error_led(pubkey, nvs, flashes, 1)
+        return flashes, 1
 
     # Find the signature
     if not disable_sig_checks and not exists(firm_sig):
         logs.print_error("firm", "missing firmware signature")
-        _fatal_error_led(pubkey, nvs, flashes, 2)
+        return flashes, 2
 
     firm_f = open(firm_name, "rb")
 
@@ -206,7 +208,7 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> Non
         # later)
         if len(sig) != 512:
             logs.print_error("firm", "corrupt/malformed signature")
-            _fatal_error_led(pubkey, nvs, flashes, 2)
+            return flashes, 2
 
         firm_buffer = memoryview(bytearray(64))
         firm_hasher = sha256()
@@ -235,11 +237,11 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> Non
             # TODO: DBX is not checked. (error flash 2/3, 4)
         except:
             logs.print_error("firm", "invalid pkcs#1 signature")
-            _fatal_error_led(pubkey, nvs, flashes, 2)
+            return flashes, 2
 
         if not hashes_equal:
             logs.print_error("firm", "signature validation failed")
-            _fatal_error_led(pubkey, nvs, flashes, 2)
+            return flashes, 2
 
     # Mount firm (sig checks probably passed)
     # NOTE: Reusing buffer to avoid possible TOCTOU vulnerability
@@ -248,7 +250,7 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> Non
         mount(firm_bdev, "/firm", readonly=True)
     except OSError:
         logs.print_error("firm", "failed to mount firmware")
-        _fatal_error_led(pubkey, nvs, flashes, 5)
+        return flashes, 5
 
     # Anti-downgrade firmware check.
     # NOTE: /firm/version is a single-line file with only a 4 byte number contained inside.
@@ -257,7 +259,8 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> Non
 
         if not exists("/firm/version"):
             logs.print_error("firm", "no version info found")
-            _fatal_error_led(pubkey, nvs, flashes, 3)
+            umount("/firm")
+            return flashes, 3
 
         firm_ver_f = open("/firm/version", "r")
         firm_version = int(firm_ver_f.read().strip())
@@ -266,7 +269,8 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> Non
         # Firmware is older than what was last booted.
         if firm_version < last_booted_ver:
             logs.print_error("firm", "found firmware older than installed")
-            _fatal_error_led(pubkey, nvs, flashes, 3)
+            umount("/firm")
+            return flashes, 3
 
         # Ensure nvs version is up to date (especially after a firmware update)
         if firm_version > last_booted_ver:
@@ -274,8 +278,8 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> Non
 
         logs.print_info("firm", f"found firmware version {firm_version}")
 
-    
     # Firmware has passed all checks; is now bootable.
+    return None
 
 
 # Load the boot payload (typically firmboot.bin but can be firmboot.mpy
@@ -358,7 +362,16 @@ def firm_entry(pubkey: RSA, boot_nvs: ReadOnlyNVS) -> None:
     sd_boot = sd_boot_enabled and boot_pressed
 
     _boot_mount_root(pubkey, boot_nvs, sd_boot)
-    _boot_validate_firmware(pubkey, boot_nvs, sd_boot)
+
+    # Load firmware package
+    err_code = _boot_validate_firmware(pubkey, boot_nvs, f"{boot_nvs.get_str("firm")}.img", sd_boot)
+
+    # Load recovery module
+    if err_code is not None:
+        if _boot_validate_firmware(pubkey, boot_nvs, "recovery.img", sd_boot) is not None:
+            _fatal_error_led(pubkey, boot_nvs, err_code[0], err_code[1])
+
+        logs.print_info("firm", "loading recovery firmware package")
 
     # Load firmboot.bin and execute it.
     firm_bin = _boot_read_firm_file(pubkey, boot_nvs)

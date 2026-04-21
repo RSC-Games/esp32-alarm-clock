@@ -1,14 +1,13 @@
 from ucrypto.ufastrsa.rsa import RSA
+from __nvs_perms import ReadOnlyNVS
 from micropython import const
-from machine import unique_id
-from binascii import hexlify
-from esp32 import NVS
 import logs
 import time
 
-_PRODUCT_ID = const(b"esp32_alarm_clock")
-_SERIAL_NUM = const(b"RALC0000000000001")
-_FIRMWARE_PATH = const(b"recovery")#const(b"clock_firm")
+_PRODUCT_ID = const("esp32_alarm_clock")
+_SERIAL_NUM = const("RALC0000000000001")
+_SHARED_KEY_BIN = const(b"")
+_FIRMWARE_PATH = const("clock_firm")
 _VERSION = const(0) # Doesn't change
 _DBX = const(b"")
 _NVS_LOCKOUT = const(0)
@@ -19,38 +18,48 @@ _BOOT_MPY = const(1)   # Booting a .bin sounds cooler but .mpy is easier to test
 # Load the boot nvs. Key is the device unique id XOR the public key modulus.
 # The boot NVS has the following REQUIRED keys:
 # X "prod_id" (blob): product name/id (identical for all devices of a given product line)
-# X "prod_id_len" (int): length of the product id
+# X "lprod_id" (int): length of the product id
 # - "serial" (blob): contains the device serial (randomly generated at provisioning)
-# - "serial_len" (int): contains the length of the device serial
+# - "lserial" (int): contains the length of the device serial
+# X "shared_key" (blob): contains the device shared key + sig (signed by root key)
+# X "lshared_key" (int): length of the shared key
 # - "firm" (blob): contains the name of the NOR firmware.img app to load
-# - "firm_len" (int): length of the name of the NOR image
+# - "lfirm" (int): length of the name of the NOR image
 # - "version" (int): version id of the firmware image to load
 # X "dbx" (blob): contains blacklisted hashes (not currently used)
-# X "dbx_len" (int): length of the dbx entry
+# X "ldbx" (int): length of the dbx entry
 # - "nvs_lock" (int): disallow writes to the fields in this NVS
 # - "en_sd_boot" (int): allow booting from an SD card
 # - "dis_sig_verif" (int): disable signature validation and allow booting any payload
-# - "boot_mpy" (int): look for firm_boot.mpy rather than firm_boot.bin when loading 
+# - "boot_mpy" (int): look for firmboot.mpy rather than firmboot.bin when loading 
 #
-# NOTE: Pointer erased at boot lockout.
-# THIS FUNCTION IS NOT USEFUL AS LONG AS A PUBLIC KEY DOES NOT EXIST!!!
-def format_boot_nvs(pubkey: RSA, nvs: NVS):
-    # TODO: public key not known; nvs pointer will be incorrect
-    nvs_uid = pubkey.n ^ int.from_bytes(unique_id(), "little") & 0x00FFFFFFFFFFFFFF
-    nvs_name = b"k" + hexlify(int.to_bytes(nvs_uid, 7, "little"))
-
-    boot_nvs = NVS(nvs_name.decode())
+# TODO: Write code for generating and embedding the shared key
+#
+# TODO: Only write permanent fields once (like prod id and serial) and refuse to update
+# those on a rerun. Allow updating other fields unless nvs_lock is configured.
+#
+# TODO: also increase nvs namespace entropy and generate the serial from random digits
+# and the unique id (so predictable str + randnum ^ unique id + a check sum or something)
+#
+def format_boot_nvs(pubkey: RSA, boot_nvs: ReadOnlyNVS):
+    # NVS provided by bootrom; not required here.
     logs.print_warning("nvs-init", "setting up boot nvs")
 
-    boot_nvs.set_blob("prod_id", _PRODUCT_ID)
-    boot_nvs.set_i32("prod_id_len", len(_PRODUCT_ID))
-    boot_nvs.set_blob("serial", _SERIAL_NUM)
-    boot_nvs.set_i32("serial_len", len(_SERIAL_NUM))
-    boot_nvs.set_blob("firm", _FIRMWARE_PATH)
-    boot_nvs.set_i32("firm_len", len(_FIRMWARE_PATH))
+    try:
+        boot_nvs.get_str("prod_id")
+        logs.print_warning("nvs-init", "nvs already flashed; aborting")
+        return
+    
+    except OSError:
+        # NVS isn't imaged; rewrite crucial fields
+        pass
+
+    boot_nvs.set_str("prod_id", _PRODUCT_ID)
+    boot_nvs.set_str("serial", _SERIAL_NUM)
+    boot_nvs.set_blobn("shared_key", _SHARED_KEY_BIN)
+    boot_nvs.set_str("firm", _FIRMWARE_PATH)
     boot_nvs.set_i32("version", _VERSION)
-    boot_nvs.set_blob("dbx", _DBX)
-    boot_nvs.set_i32("dbx_len", len(_DBX))
+    boot_nvs.set_blobn("dbx", _DBX)
     boot_nvs.set_i32("nvs_lock", _NVS_LOCKOUT)
     boot_nvs.set_i32("en_sd_boot", _ENABLE_SD_BOOT)
     boot_nvs.set_i32("dis_sig_verif", _ALLOW_INSECURE_BOOT)
@@ -59,7 +68,6 @@ def format_boot_nvs(pubkey: RSA, nvs: NVS):
 
     logs.print_warning("nvs-init", "boot nvs initialized")
     time.sleep(1)
-
 
 def firm_entry(pubkey, nvs):
     logs.print_warning("nvs-init", "FLASHING NVS")

@@ -168,18 +168,22 @@ def _boot_clean_syspath() -> None:
 # Load the boot nvs. Key is the device unique id XOR the public key modulus.
 # The boot NVS has the following REQUIRED keys:
 # X "prod_id" (blob): product name/id (identical for all devices of a given product line)
-# X "prod_id_len" (int): length of the product id
+# X "lprod_id" (int): length of the product id
 # - "serial" (blob): contains the device serial (randomly generated at provisioning)
-# - "serial_len" (int): contains the length of the device serial
+# - "lserial" (int): contains the length of the device serial
+# X "shared_key" (blob): contains the device shared key + sig (signed by root key)
+# X "lshared_key" (int): length of the shared key
 # - "firm" (blob): contains the name of the NOR firmware.img app to load
-# - "firm_len" (int): length of the name of the NOR image
+# - "lfirm" (int): length of the name of the NOR image
 # - "version" (int): version id of the firmware image to load
 # X "dbx" (blob): contains blacklisted hashes (not currently used)
-# X "dbx_len" (int): length of the dbx entry
+# X "ldbx" (int): length of the dbx entry
 # - "nvs_lock" (int): disallow writes to the fields in this NVS
 # - "en_sd_boot" (int): allow booting from an SD card
 # - "dis_sig_verif" (int): disable signature validation and allow booting any payload
 # - "boot_mpy" (int): look for firmboot.mpy rather than firmboot.bin when loading 
+#
+# TODO: Add support for the shared key.
 #
 # NOTE: Pointer erased at boot lockout.
 def _boot_load_nvs(pubkey: RSA) -> ReadOnlyNVS:
@@ -514,10 +518,13 @@ def _boot_mount_root(pubkey: RSA, nvs: ReadOnlyNVS, boot_from_sd: bool) -> None:
 # SD boot has a different flash code set (but is otherwise functionally
 # identical).
 #
+# Returns none if firmware validation and mounting was successful; otherwise
+# returns the error code.
+#
 # NOTE: Pointer erased at boot lockout.
-def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> None:
+def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, firm_name: str, sd_boot: bool) -> tuple[int, int] | None:
     from __firmimg import FirmwareImage
-    from vfs import mount
+    from vfs import mount, umount
     import os
 
     # Error reporting
@@ -536,19 +543,18 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> Non
     if disable_sig_checks:
         logs.print_warning("boot", "signature checking disabled! allowing insecure payloads")
 
-    firm_name = f"{nvs.get_str("firm")}.img"
     firm_sig = f"{firm_name}.sig"
     logs.print_info("boot", f"loading firmware image {firm_name}")
 
     # Look for our firm
     if not exists(firm_name):
         logs.print_error("boot", "missing firmware image")
-        _fatal_error_led(pubkey, nvs, flashes, 1)
+        return flashes, 1
 
     # Find the signature
     if not disable_sig_checks and not exists(firm_sig):
         logs.print_error("boot", "missing firmware signature")
-        _fatal_error_led(pubkey, nvs, flashes, 2)
+        return flashes, 2
 
     firm_f = open(firm_name, "rb")
 
@@ -566,7 +572,7 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> Non
         # later)
         if len(sig) != 512:
             logs.print_error("boot", "corrupt/malformed signature")
-            _fatal_error_led(pubkey, nvs, flashes, 2)
+            return flashes, 2
 
         firm_buffer = memoryview(bytearray(64))
         firm_hasher = sha256()
@@ -595,11 +601,11 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> Non
             # TODO: DBX is not checked. (error flash 2/3, 4)
         except:
             logs.print_error("boot", "invalid pkcs#1 signature")
-            _fatal_error_led(pubkey, nvs, flashes, 2)
+            return flashes, 2
 
         if not hashes_equal:
             logs.print_error("boot", "signature validation failed")
-            _fatal_error_led(pubkey, nvs, flashes, 2)
+            return flashes, 2
 
     # Mount firm (sig checks probably passed)
     # NOTE: Reusing buffer to avoid possible TOCTOU vulnerability
@@ -608,7 +614,7 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> Non
         mount(firm_bdev, "/firm", readonly=True)
     except OSError:
         logs.print_error("boot", "failed to mount firmware")
-        _fatal_error_led(pubkey, nvs, flashes, 5)
+        return flashes, 5
 
     # Anti-downgrade firmware check.
     # NOTE: /firm/version is a single-line file with only a 4 byte number contained inside.
@@ -617,7 +623,8 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> Non
 
         if not exists("/firm/version"):
             logs.print_error("boot", "no version info found")
-            _fatal_error_led(pubkey, nvs, flashes, 3)
+            umount("/firm")
+            return flashes, 3
 
         firm_ver_f = open("/firm/version", "r")
         firm_version = int(firm_ver_f.read().strip())
@@ -626,7 +633,8 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> Non
         # Firmware is older than what was last booted.
         if firm_version < last_booted_ver:
             logs.print_error("boot", "found firmware older than installed")
-            _fatal_error_led(pubkey, nvs, flashes, 3)
+            umount("/firm")
+            return flashes, 3
 
         # Ensure nvs version is up to date (especially after a firmware update)
         if firm_version > last_booted_ver:
@@ -634,8 +642,8 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, sd_boot: bool) -> Non
 
         logs.print_info("boot", f"found firmware version {firm_version}")
 
-    
     # Firmware has passed all checks; is now bootable.
+    return None
 
 
 # Load the boot payload (typically firmboot.bin but can be firmboot.mpy
@@ -722,6 +730,13 @@ def boot_main() -> None:
     # Security engine initialization already performed (see imports)
     # Private key provides n, e, d; public key only requires n, e.
     # TODO: Generate a key 
+    # TODO: Keep root key in bootrom ONLY and sign a shared key which is used
+    # for nor/sd boot (only shared key) and uart boot (shared/root key)
+    # Key format would have prod_id, byte(key_type(1b), 2^key_len length), then key bytes,
+    # then signature.
+    # NVS namespace name is still based on the root key modulus
+    # Stored firms will always be passed the shared key in app_main
+    # Whatever key was used to validate the uart firm payload would be passed into firm_entry
     pubkey = RSA(4096, 1, 1)
 
     # Determine boot mode (NOR or UART/SD)
@@ -741,7 +756,16 @@ def boot_main() -> None:
         _boot_launch_uart_rcm(pubkey, boot_nvs) # does not return
 
     _boot_mount_root(pubkey, boot_nvs, sd_boot)
-    _boot_validate_firmware(pubkey, boot_nvs, sd_boot)
+
+    # Load firmware package
+    err_code = _boot_validate_firmware(pubkey, boot_nvs, f"{boot_nvs.get_str("firm")}.img", sd_boot)
+
+    # Load recovery module
+    if err_code is not None:
+        if _boot_validate_firmware(pubkey, boot_nvs, "recovery.img", sd_boot) is not None:
+            _fatal_error_led(pubkey, boot_nvs, err_code[0], err_code[1])
+
+        logs.print_info("boot", "loading recovery firmware package")
 
     # Load firmboot.bin and execute it.
     firm_bin = _boot_read_firm_file(pubkey, boot_nvs)
@@ -773,8 +797,6 @@ def boot_main() -> None:
     finally:
         # Application error (should never return)
         _fatal_error_led(pubkey, boot_nvs, 5, 1, reboot=True)
-
-    # TODO: Missing recovery.img boot
 
 try:
     if __name__ == "__main__":
