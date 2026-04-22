@@ -1,8 +1,14 @@
 from __nvs_perms import ReadOnlyNVS
-import recovery_utils
 import machine
+import time
 import logs
+import sys
 import os
+
+# Set up app environment
+sys.path.append("/firm/bin")
+
+import recovery_utils
 
 # Clean up/fix the main firmware package after a failed update.
 # Update failure will likely come from a power outage while installing
@@ -25,16 +31,16 @@ import os
 #
 def _fixup_bad_update_secure() -> bool:
     # Files from a partially finished upgrade
-    old_sig_present = recovery_utils.file_exists("/firmware.img.sig.old")
-    old_firm_present = recovery_utils.file_exists("/firmware.img.old")
+    old_sig_present = recovery_utils.file_exists("/clock_firm.img.sig.old")
+    old_firm_present = recovery_utils.file_exists("/clock_firm.img.old")
 
     # Actively installed firm/sig (Likely partially installed)
-    active_sig_present = recovery_utils.file_exists("/firmware.img.sig")
-    active_firm_present = recovery_utils.file_exists("/firmware.img")
+    active_sig_present = recovery_utils.file_exists("/clock_firm.img.sig")
+    active_firm_present = recovery_utils.file_exists("/clock_firm.img")
 
     # Newly downloaded update files
-    new_sig_present = recovery_utils.file_exists("/firmware.img.sig.new")
-    new_firm_present = recovery_utils.file_exists("/firmware.img.new")
+    new_sig_present = recovery_utils.file_exists("/clock_firm.img.sig.new")
+    new_firm_present = recovery_utils.file_exists("/clock_firm.img.new")
 
     # EDGE CASE (active firm fully installed) -> FIX: firm corrupt; install new copy
     if active_firm_present and active_sig_present:
@@ -59,7 +65,7 @@ def _fixup_bad_update_secure() -> bool:
     elif active_sig_present:
         # Easy fix: only need to install the new firm
         if new_firm_present:
-            os.rename("/firmware.img.new", "/firmware.img")
+            os.rename("/clock_firm.img.new", "/clock_firm.img")
             return True
         
         # Missing new firm; try to roll back to old firmware
@@ -110,6 +116,10 @@ def _fixup_bad_update() -> bool:
 def app_main(nvs: ReadOnlyNVS):
     logs.print_warning("recovery", "booted recovery firmware")
 
+    # firmfs size:
+    f_bsize, _, f_blocks, f_bfree, _, _, _, _, _, _ = os.statvfs("/firm")
+    print(f"firmfs free/size: {f_bsize * f_bfree}/{f_bsize * f_blocks} B")
+
     # prod id check (to avoid cross-installing firmwares)
     prod_id = nvs.get_str("prod_id")
 
@@ -135,17 +145,39 @@ def app_main(nvs: ReadOnlyNVS):
     # Perform stage 2 recovery. To actually develop this will require a lot of time
     # and development effort (and working hardware to test on)
     from hal import peripherals
+    from hal.peripherals import FBCON
+    FBCON.write_line("i: booted recovery firm (c) 2026")
+    FBCON.write_line("W: DEVICE FIRMWARE IS UNBOOTABLE!")
+    FBCON.write_line("W: ATTEMPTING TO RECOVER DEVICE!")
     peripherals.init()
+
+    if peripherals.NIC.try_connect(("Pixel_5474", peripherals.NIC.wlan.SEC_WPA2, "1234567890")):
+        logs.print_info("recovery", f"got network ip addr {peripherals.NIC.get_ip()}")
+    else:
+        logs.print_warning("recovery", "connection failed")
 
     try:
         from internet_recovery import main
         main.main()
 
+    except Exception as ie:
+        logs.print_error("recovery", "unhandled exception in firm")
+        FBCON.set_hidden(False)
+        FBCON.write_line("f: panic in recovery mode")
+        sys.print_exception(ie)
+        time.sleep(5)
+
     except SystemExit as exit:
-        if exit.code == 0:
+        FBCON.set_hidden(False)
+
+        if exit.value == 0:  # type: ignore
             logs.print_info("recovery", "downloaded and installed new firmware; rebooting")
+            FBCON.write_line("i: rebooting")
             machine.reset()
     
+        FBCON.write_line("w: recovery failed")
         logs.print_error("recovery", "stg2 fail. only option now is UART boot")
 
+    FBCON.set_hidden(False)
+    FBCON.write_line("i: rebooting")
     logs.print_info("recovery", "exit requested; rebooting")

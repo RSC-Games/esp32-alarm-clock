@@ -8,10 +8,10 @@ import gc
 print("code exec pre entry")
 gc.collect()
 
-# initrd size:
-f_bsize, _, f_blocks, f_bfree, _, _, _, _, _, _ = os.statvfs("/initrd")
+# initrd size (not supported on current bootrom):
+#f_bsize, _, f_blocks, f_bfree, _, _, _, _, _, _ = os.statvfs("/initrd")
 
-print(f"initrd free/size: {f_bsize * f_bfree}/{f_bsize * f_blocks} B")
+#print(f"initrd free/size: {f_bsize * f_bfree}/{f_bsize * f_blocks} B")
 
 def firm_entry(pubkey, nvs):
     print("have code exec post firm_entry")

@@ -1,4 +1,5 @@
 """MicroPython SSD1309 OLED monochrom display driver."""
+# Modified version of the driver found here: https://github.com/rdagger/micropython-ssd1309/tree/master
 from machine import I2C
 from math import cos, sin, pi, radians
 from micropython import const  # type: ignore
@@ -80,11 +81,14 @@ class Display(object):
         self.pages = self.height // 8
         self.byte_width = -(-width // 8)  # Ceiling division
         self.buffer_length = self.byte_width * height
+
         # Buffer
         self.mono_image = bytearray(self.buffer_length)
+
         # Frame Buffer
         self.monoFB = FrameBuffer(self.mono_image, width, height, MONO_VLSB)
         self.clear_buffers()
+
         # Send initialization commands
         for cmd in (
                     self.DISPLAY_OFF,
@@ -102,7 +106,7 @@ class Display(object):
                     else 0x12,
                     self.CONTRAST_CONTROL, 0xFF,
                     self.PRECHARGE_PERIOD, 0xF1,
-                    self. VCOM_DESELECT_LEVEL, 0x40,
+                    self.VCOM_DESELECT_LEVEL, 0x40,
                     self.ENTIRE_DISPLAY_ON,  # output follows RAM contents
                     self.INVERSION_OFF,  # not inverted
                     self.DISPLAY_ON):  # on
@@ -110,12 +114,6 @@ class Display(object):
 
         self.clear_buffers()
         self.present()
-
-    def cleanup(self):
-        """Clean up resources."""
-        self.clear()
-        self.sleep()
-        print('display off')
 
     def clear(self):
         """Clear display.
@@ -128,7 +126,7 @@ class Display(object):
         """
         self.monoFB.fill(0x00)
 
-    def draw_bitmap(self, path, x, y, w, h, invert=False, rotate=0):
+    def draw_bitmap(self, path: str, x: int, y: int, w: int, h: int, invert=False, rotate=0):
         """Load MONO_HMSB bitmap from disc and draw to screen.
 
         Args:
@@ -153,6 +151,7 @@ class Display(object):
                     for x1 in range(w):
                         fb2.pixel(x1, y1, fb.pixel(x1, y1) ^ 0x01)
                 fb = fb2
+
             elif rotate == 90:  # 90 degrees
                 fb2 = FrameBuffer(bytearray(array_size), h, w, MONO_HMSB)
                 for y1 in range(h):
@@ -163,6 +162,7 @@ class Display(object):
                         else:
                             fb2.pixel(y1, x1, fb.pixel(x1, (h - 1) - y1))
                 fb = fb2
+
             elif rotate == 180:  # 180 degrees
                 fb2 = FrameBuffer(bytearray(array_size), w, h, MONO_HMSB)
                 for y1 in range(h):
@@ -174,6 +174,7 @@ class Display(object):
                             fb2.pixel(x1, y1,
                                       fb.pixel((w - 1) - x1, (h - 1) - y1))
                 fb = fb2
+
             elif rotate == 270:  # 270 degrees
                 fb2 = FrameBuffer(bytearray(array_size), h, w, MONO_HMSB)
                 for y1 in range(h):
@@ -342,7 +343,7 @@ class Display(object):
             return
         self.monoFB.hline(x, y, w, int(invert ^ 1))
 
-    def draw_letter(self, x, y, letter, font, invert=False, rotate: int|bool=False):
+    def draw_letter(self, x, y, letter: str, font, invert=False, rotate: int|bool=False):
         """Draw a letter.
 
         Args:
@@ -354,14 +355,17 @@ class Display(object):
             rotate (int): Rotation of letter
         """
         fbuf, w, h = font.get_letter(letter, invert=invert, rotate=rotate)
+
         # Check for errors
-        if w == 0:
+        if fbuf is None:
             return w, h
+        
         # Offset y for 270 degrees and x for 180 degrees
         if rotate == 180:
             x -= w
         elif rotate == 270:
             y -= h
+
         self.monoFB.blit(fbuf, x, y)
         return w, h
 
@@ -416,6 +420,7 @@ class Display(object):
         """
         if self.is_off_grid(x, y, x, y):
             return
+        
         self.monoFB.pixel(x, y, int(invert ^ 1))
 
     def draw_polygon(self, sides, x0, y0, r, invert=False, rotate=0):
@@ -469,7 +474,7 @@ class Display(object):
             return
         self.monoFB.blit(fbuf, x, y)
 
-    def draw_text(self, x, y, text, font, invert=False,
+    def draw_text(self, x: int, y: int, text: str, font, invert=False,
                   rotate=0, spacing=1):
         """Draw text.
 
@@ -485,15 +490,19 @@ class Display(object):
         for letter in text:
             # Get letter array and letter dimensions
             w, h = self.draw_letter(x, y, letter, font, invert, rotate)
+
             # Stop on error
             if w == 0 or h == 0:
                 return
+            
             if rotate == 0:
                 # Fill in spacing
                 if spacing:
                     self.fill_rectangle(x + w, y, spacing, h, invert ^ 1)
+                    
                 # Position x for next letter
                 x += (w + spacing)
+
             elif rotate == 90:
                 # Fill in spacing
                 if spacing:
@@ -840,6 +849,21 @@ class Display(object):
         self.write_cmd(0)
         self.write_cmd(self.pages - 1)
         self.write_data(self.mono_image)
+
+    def contrast(self, contrast: int):
+        """Change the current display contrast (brightness)."""
+        self.write_cmd(self.CONTRAST_CONTROL)
+        self.write_cmd(contrast)
+
+    def set_vcomdesel(self, arg: int):
+        """Set the V_com deselect level (0-7)"""
+        self.write_cmd(self.VCOM_DESELECT_LEVEL)
+        self.write_cmd(arg << 4)
+
+    def set_precharge(self, p1: int, p2: int):
+        """Set the precharge interval for the matrix. Augments contrast setting."""
+        self.write_cmd(self.PRECHARGE_PERIOD)
+        self.write_cmd((p2 << 4) | p1)
 
     def sleep(self):
         """Put display to sleep."""

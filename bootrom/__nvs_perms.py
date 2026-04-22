@@ -2,11 +2,10 @@
 from esp32 import NVS
 
 # Forced RO permissions for hardware.
+# TODO (4/22/2026): PATCH BOOTROM BUG (erase_keys not stubbed)
 class ReadOnlyNVS(NVS):
     def __init__(self, nspace: str):
-        super().__init__(nspace)    
-
-    # Writes unsupported (in theory, executed by lockout)
+        super().__init__(nspace)
     
     # Helper for easily getting variable-length strings.
     def get_str(self, flag: str) -> str:
@@ -47,7 +46,9 @@ class ReadOnlyNVS(NVS):
         self.set_blob = __stub
         self.set_str = __stub
         self.set_blobn = __stub
+        self.erase_key = __stub
         self.commit = __stub
 
         # Prevent reinjection of valid write functions.
+        self.__delattr__ = __stub
         self.__setattr__ = __stub

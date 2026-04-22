@@ -15,6 +15,9 @@ import sys
 # allow the below product type to run this signed copy of the payload.
 _PRODUCT_ID = const("esp32_alarm_clock")
 
+# Debugging flag. Not recommended for production.
+_SKIP_FORMAT_NOR = const(True)
+
 # Do not perform a filesystem format and do not reinject recovery to the filesystem.
 # Instead, the tool only writes the received <app_name>.img to NOR, then reboots.
 _FAST_APP_REIMAGE = const(False)
@@ -33,21 +36,22 @@ RECOVERY_IMG = bytes()
 RECOVERY_IMG_SHA256 = bytes()
 
 
-def format_internal_fs() -> bool:
+def mount_internal_fs() -> bool:
     """
     Format the internal NOR flash data partition. Should work in nearly all cases
     excluding dying flash or electrical interference (basically hardware issues).
     This will also transparently mount the NOR flash at root for future operations.
     """
 
-    logs.print_warning("imager", "FORMATTING NOR! ALL DATA WILL BE ERASED!")
-    print("waiting 5s", end="")
+    if not _SKIP_FORMAT_NOR:
+        logs.print_warning("imager", "FORMATTING NOR! ALL DATA WILL BE ERASED!")
+        print("waiting 5s", end="")
 
-    for i in range(5):
-        time.sleep(1)
-        print(".", end="")
-    
-    print("GO")
+        for i in range(5):
+            time.sleep(1)
+            print(".", end="")
+        
+        print("GO")
 
     data_partitions = Partition.find(Partition.TYPE_DATA, label="vfs")
 
@@ -57,7 +61,9 @@ def format_internal_fs() -> bool:
         return False
 
     try: 
-        VfsLfs2.mkfs(data_partitions[0])
+        if not _SKIP_FORMAT_NOR:
+            VfsLfs2.mkfs(data_partitions[0])
+        
         mount(data_partitions[0], "/")
 
     except OSError as ie:
@@ -125,7 +131,7 @@ def firm_entry(pubkey: RSA, nvs: ReadOnlyNVS):
 
     if not _FAST_APP_REIMAGE:
         # internal fs format required/recovery.img injection
-        if not format_internal_fs():
+        if not mount_internal_fs():
             time.sleep(5)
             return
         

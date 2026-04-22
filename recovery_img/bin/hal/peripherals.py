@@ -1,8 +1,6 @@
-from drivers import ssd1309_legacy
+from hal.drivers import ssd1309_legacy, wifi, fbcon
 from machine import Pin, ADC, I2C
 from micropython import const
-from network import WLAN
-
 
 # HW PIN DEFS
 _PIN_DIR_UP = const(27)
@@ -20,7 +18,7 @@ _PIN_SD_MISO = const(12)
 _PIN_SD_CLK = const(14)
 _PIN_SD_CS = const(15)
 
-_OLED_I2C_BUS_ID = const(1)
+_OLED_I2C_BUS_ID = const(0)
 _OLED_I2C_FREQ = const(1_000_000)
 _PIN_OLED_SCL = const(18)
 _PIN_OLED_SDA = const(19)
@@ -46,7 +44,9 @@ DISPLAY = ssd1309_legacy.Display(I2C(_OLED_I2C_BUS_ID, freq=_OLED_I2C_FREQ), fli
 
 # Speaker: Not required in recovery firmware
 
-NIC = WLAN(WLAN.IF_STA)
+# Software devices
+NIC = wifi.WiFiManager()
+FBCON = fbcon.GLOBAL_FBCON
 
 
 def init():
@@ -55,8 +55,9 @@ def init():
     partially initialized, but network/display/pwr_sense require a bit more.
     """
     
-    DISPLAY.draw_rectangle(0, 0, 128, 64)
-    NIC.active(True)
+    # TODO: Make less ANNOYINGLY NOISY (set vcom_desel/precharge/clock div)
+    # see https://www.hpinfotech.ro/SSD1309.pdf
+    NIC.bring_up()
 
     # TODO: start pwr_sense monitoring driver to detect power loss events and prevent
     # the device from wasting CMOS battery energy

@@ -9,7 +9,7 @@ import os
 # Windows-specific; port to linux later
 MPY_CROSS_PATH = f"{pathlib.Path(__file__).parent}/mpy-cross.exe"
 RECOVERY_IMAGER_PATH = f"{pathlib.Path(__file__).parent}/payloads/factory_imager_base.py"
-MAX_RECOVERY_IMG_SIZE = 13*1024
+MAX_RECOVERY_IMG_SIZE = 30*1024
 
 def _create_build_dir(in_tree: str, build_tree: str):
     if os.path.exists(build_tree):
@@ -26,11 +26,14 @@ def _compile_code(build_tree: str) -> bool:
 
     # Recursively compile all .mpy files inside
     for folder, _, files in os.walk("."):
-        print(f"in folder {folder}")
+        #print(f"in folder {folder}")
 
         for file in files:
-            print(f"found file {file}")
-            ret = os.system(f"{MPY_CROSS_PATH} {folder}/{file}")
+            if os.path.splitext(file)[1] != ".py":
+                continue
+
+            print(f" .. mpy {file}")
+            ret = os.system(f"{MPY_CROSS_PATH} -O2 {folder}/{file}")
 
             if ret != 0:
                 print(f" -- error while compiling {file}")

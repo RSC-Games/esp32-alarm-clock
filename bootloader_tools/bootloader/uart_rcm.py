@@ -1,3 +1,5 @@
+from . import output
+
 import threading
 import binascii
 import hashlib
@@ -7,7 +9,7 @@ import time
 
 # USB/UART recovery bootloader (data link layer)
 _UART_RCM_CONN_RETRIES = 10
-_UART_RCM_CONN_MAX_BYTES_TO_TIMEOUT = 2048
+_UART_RCM_CONN_MAX_BYTES_TO_TIMEOUT = 1024
 _UART_RCM_BANNER = b"\x55BOOT_RCM_RSC\xAA"
 _UART_RCM_CONN_ESTABLISHED = b"\xAARSC_RCM_BOOT\x55"
 
@@ -62,7 +64,7 @@ def _establish_connection(uart: serial.Serial) -> bool:
                 break
 
         if not found_end_byte:
-            print(f"no found start byte; retrying ({i+1}/{_UART_RCM_CONN_RETRIES})")
+            output.print_tool(f"no found start byte; retrying ({i+1}/{_UART_RCM_CONN_RETRIES})")
             time.sleep(0.1)
             continue
             
@@ -71,12 +73,13 @@ def _establish_connection(uart: serial.Serial) -> bool:
             pass
 
         if (uart.read(len(_UART_RCM_BANNER)) == _UART_RCM_BANNER):
-            print("\nsending connection request...")
+            print()
+            output.print_tool("got header; sending connection request...")
             uart.write(_UART_RCM_CONN_ESTABLISHED)
             uart.flush()
             return True
         
-        print(f"connection attempt failed; retrying ({i+1}/{_UART_RCM_CONN_RETRIES})")
+        output.print_tool(f"connection attempt failed; retrying ({i+1}/{_UART_RCM_CONN_RETRIES})")
         
     return False
 
@@ -177,6 +180,11 @@ def open_device(port: str) -> serial.Serial:
 
     if not _establish_connection(serial_port):
         raise OSError("connection attempt failed")
+    
+    if not bootrom_is_ready(serial_port):
+        raise OSError("bootrom refused handshake")
+    
+    output.print_tool("connection succeeded; ready for commands")
 
     serial_port.dtr = False
     return serial_port
@@ -192,12 +200,12 @@ def bootrom_is_ready(uart: serial.Serial) -> bool:
     res = _get_datalink_packet(uart)
 
     if res is None:
-        print("bad crc")
+        output.print_tool("response: bad crc")
         return False
     
     flags, payload = res
 
-    print(f"response: flags {flags} payload {payload}")
+    output.print_tool(f"response: flags {flags} payload {payload}")
 
     return flags & _UART_RCM_FLAG_READY != 0
 
@@ -210,7 +218,7 @@ def boot_payload(uart: serial.Serial, payload_path: str) -> bool:
     firm_array[:2] = int.to_bytes(2, 2, "little")
     firm_array[2 + 512:] = firm_bytes
 
-    print(f"injecting payload sha256 {hashlib.sha256(firm_bytes).hexdigest()} len {len(firm_array[2+512:])} B")
+    output.print_tool(f"injecting payload sha256 {hashlib.sha256(firm_bytes).hexdigest()} len {len(firm_array[2+512:])} B")
 
     packet = _build_datalink_packet(0, firm_array)
     uart.write(packet)
@@ -227,6 +235,8 @@ def run_user_connection_tool(rcm: serial.Serial):
     :param rcm: Device to connect to.
     """
 
+    output.print_tool("uart boot exited; starting user i/o pipe")
+
     def do_write_pipe():
         try:
             while True:
@@ -241,5 +251,7 @@ def run_user_connection_tool(rcm: serial.Serial):
     try:
         while True:
             print(rcm.read(1).decode(errors="replace"), end='', flush=True)
+            
     except KeyboardInterrupt:
-        print("connection terminated")
+        print()
+        output.print_tool("connection terminated")

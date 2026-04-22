@@ -9,6 +9,10 @@
 # NVS lockout isn't fully hardened and would require modification to the mpy
 # NVS driver (to prevent accessing the app NVS) to fully lock down.
 
+# TODO: BOOTROM UPDATES:
+# - Remove unwanted built-ins like mip (but keep requests)
+# - Update __nvs_perms (bug fix pending bootrom update)
+
 # NOTE: performing initial lockout (can be disabled in the mpy firmware). Idea
 # is to prevent circumventing the secure boot chain with a keyboard interrupt.
 import micropython
@@ -55,6 +59,7 @@ _UART_RCM_HEADER = micropython.const("<4sHH")
 _UART_RCM_PACKET = micropython.const("<8s{}sI")
 _UART_RCM_HEADER_PREFIX = micropython.const(b"\x64RCM")
 _UART_RCM_FLAG_READY = micropython.const(0x80)
+_UART_RCM_FLAG_ACCEPT = micropython.const(0x70)
 _UART_RCM_FLAG_COMMAND_ERROR = micropython.const(0x4)
 _UART_RCM_FLAG_INVALID_PACKET = micropython.const(0x2)
 _UART_RCM_FLAG_CORRUPT_PACKET = micropython.const(0x1)
@@ -306,6 +311,15 @@ def _boot_launch_uart_rcm(pubkey: RSA, nvs: ReadOnlyNVS) -> NoReturn:
         if size >= 32768:
             err_packet = build_packet(_UART_RCM_FLAG_INVALID_PACKET, b"E_TOO_LONG")
             rcm_pipe_out.write(err_packet)
+
+            # Read everything left in the packet anyway (but don't allocate memory for it)
+            # to reduce the chance of desynchronizing with the PC
+            dump_buf = bytearray(4096)
+            rcm_pipe_in.read(size % len(dump_buf))
+
+            for _ in range(size // len(dump_buf)):
+                rcm_pipe_in.readinto(dump_buf)  # type: ignore
+
             continue
 
         # NOTE: Flags are a DONT CARE (ignore them)
@@ -326,6 +340,11 @@ def _boot_launch_uart_rcm(pubkey: RSA, nvs: ReadOnlyNVS) -> NoReturn:
             continue
 
         del packet, header_magic, flags, size, recv_crc
+
+        # Packet accepted
+        conn_packet = build_packet(_UART_RCM_FLAG_ACCEPT, b"CMD_ACCEPTED")
+        rcm_pipe_out.write(conn_packet)
+        del conn_packet
 
         # Process packet data
         packet_cmd = int.from_bytes(payload_section[:2], 'little')
@@ -384,7 +403,7 @@ def _boot_mount_payload_fs(mount_pt: str, f_path: str, bin: memoryview[int]) -> 
             if not path == self.fname:
                 raise OSError("ENOENT")
             
-            return (16384, 0, 0, 0, 0, 0, len(self.f_bytes), 0, 0, 0)
+            return (0x8000, 0, 0, 0, 0, 0, len(self.f_bytes), 0, 0, 0)
         
         def ilistdir(self, path: str):
             if not path == "/":
@@ -760,12 +779,9 @@ def boot_main() -> None:
     # Load firmware package
     err_code = _boot_validate_firmware(pubkey, boot_nvs, f"{boot_nvs.get_str("firm")}.img", sd_boot)
 
-    # Load recovery module
-    if err_code is not None:
-        if _boot_validate_firmware(pubkey, boot_nvs, "recovery.img", sd_boot) is not None:
-            _fatal_error_led(pubkey, boot_nvs, err_code[0], err_code[1])
-
-        logs.print_info("boot", "loading recovery firmware package")
+    # Load recovery module (if possible; otherwise panic)
+    if not (err_code is None or _boot_validate_firmware(pubkey, boot_nvs, "recovery.img", sd_boot) is None):
+        _fatal_error_led(pubkey, boot_nvs, err_code[0], err_code[1])
 
     # Load firmboot.bin and execute it.
     firm_bin = _boot_read_firm_file(pubkey, boot_nvs)

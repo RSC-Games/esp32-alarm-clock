@@ -14,16 +14,16 @@ def file_exists(path: str) -> bool:
 
 def install_new_firmware_local(postfix: str=".new"):
     """
-    Install a firmware package with the given postfix (located in the root directory) 
-    over the currently installed firmware package (if any).
+    Install a clock_firm package with the given postfix (located in the root directory) 
+    over the currently installed clock_firm package (if any).
     """
 
-    # Delete old firmware package
-    if file_exists("/firmware.img.sig"):
-        os.unlink("/firmware.img.sig")
-    if file_exists("/firmware.img"):
-        os.unlink("/firmware.img")
+    # Delete old clock_firm package
+    if file_exists("/clock_firm.img.sig"):
+        os.unlink("/clock_firm.img.sig")
+    if file_exists("/clock_firm.img"):
+        os.unlink("/clock_firm.img")
 
-    # Install new firmware package
-    os.rename(f"/firmware.img.sig{postfix}", "/firmware.img.sig")
-    os.rename(f"/firmware.img{postfix}", "/firmware.img")
+    # Install new clock_firm package
+    os.rename(f"/clock_firm.img.sig{postfix}", "/clock_firm.img.sig")
+    os.rename(f"/clock_firm.img{postfix}", "/clock_firm.img")
