@@ -1,151 +1,125 @@
 """MicroPython SSD1309 OLED monochrom display driver."""
+# Modified version of the public driver from this repo: https://github.com/rdagger/micropython-ssd1309/tree/master
+from machine import I2C
 from math import cos, sin, pi, radians
 from micropython import const  # type: ignore
 from framebuf import FrameBuffer, GS8, MONO_HMSB, MONO_VLSB  # type: ignore
-from utime import sleep_ms  # type: ignore
 
+# Command constants from display datasheet
+_CONTRAST_CONTROL = const(0x81)
+_ENTIRE_DISPLAY_ON = const(0xA4)
+_ALL_PIXELS_ON = const(0XA5)
+_INVERSION_OFF = const(0xA6)
+_INVERSION_ON = const(0XA7)
+_DISPLAY_OFF = const(0xAE)
+_DISPLAY_ON = const(0XAF)
+_NOP = const(0xE3)
+_COMMAND_LOCK = const(0xFD)
+_CHARGE_PUMP = const(0x8D)
+
+# Scrolling commands
+_SCROLL_HORIZONTAL_RIGHT = const(0x26)
+_SCROLL_HORIZONTAL_LEFT = const(0x27)
+_SCROLL_VERTICAL_RIGHT = const(0x29)
+_SCROLL_VERTICAL_LEFT = const(0x2A)
+_SCROLL_BY_ONE_RIGHT = const(0x2C)
+_SCROLL_BY_ONE_LEFT = const(0x2D)
+_SCROLL_SETUP_VERTICAL_AREA = const(0xA3)
+_SCROLL_DEACTIVATE = const(0x2E)
+_SCROLL_ACTIVATE = const(0x2F)
+
+# Addressing commands
+_LOW_CSA_IN_PAM = const(0x00)
+_HIGH_CSA_IN_PAM = const(0x10)
+_MEMORY_ADDRESSING_MODE = const(0x20)
+_COLUMN_ADDRESS = const(0x21)
+_PAGE_ADDRESS = const(0x22)
+_PSA_IN_PAM = const(0xB0)
+_DISPLAY_START_LINE = const(0x40)
+_SEGMENT_MAP_REMAP = const(0xA0)
+_SEGMENT_MAP_FLIP = const(0xA1)
+_MUX_RATIO = const(0xA8)
+_COM_OUTPUT_NORMAL = const(0xC0)
+_COM_OUTPUT_FLIP = const(0xC8)
+_DISPLAY_OFFSET = const(0xD3)
+_COM_PINS_HW_CFG = const(0xDA)
+_GPIO = const(0xDC)
+
+# Timing and driving scheme commands
+_DISPLAY_CLOCK_DIV = const(0xd5)
+_PRECHARGE_PERIOD = const(0xd9)
+_VCOM_DESELECT_LEVEL = const(0xdb)
 
 class Display(object):
-    """Serial and I2C interface for SD1309 monochrome OLED display.
+    """
+    I2C interface for SD1309 monochrome OLED display.
 
     Note:  All coordinates are zero based.
     """
 
-    # Command constants from display datasheet
-    CONTRAST_CONTROL = const(0x81)
-    ENTIRE_DISPLAY_ON = const(0xA4)
-    ALL_PIXELS_ON = const(0XA5)
-    INVERSION_OFF = const(0xA6)
-    INVERSION_ON = const(0XA7)
-    DISPLAY_OFF = const(0xAE)
-    DISPLAY_ON = const(0XAF)
-    NOP = const(0xE3)
-    COMMAND_LOCK = const(0xFD)
-    CHARGE_PUMP = const(0x8D)
-
-    # Scrolling commands
-    SCROLL_HORIZONTAL_RIGHT = const(0x26)
-    SCROLL_HORIZONTAL_LEFT = const(0x27)
-    SCROLL_VERTICAL_RIGHT = const(0x29)
-    SCROLL_VERTICAL_LEFT = const(0x2A)
-    SCROLL_BY_ONE_RIGHT = const(0x2C)
-    SCROLL_BY_ONE_LEFT = const(0x2D)
-    SCROLL_SETUP_VERTICAL_AREA = const(0xA3)
-    SCROLL_DEACTIVATE = const(0x2E)
-    SCROLL_ACTIVATE = const(0x2F)
-
-    # Addressing commands
-    LOW_CSA_IN_PAM = const(0x00)
-    HIGH_CSA_IN_PAM = const(0x10)
-    MEMORY_ADDRESSING_MODE = const(0x20)
-    COLUMN_ADDRESS = const(0x21)
-    PAGE_ADDRESS = const(0x22)
-    PSA_IN_PAM = const(0xB0)
-    DISPLAY_START_LINE = const(0x40)
-    SEGMENT_MAP_REMAP = const(0xA0)
-    SEGMENT_MAP_FLIP = const(0xA1)
-    MUX_RATIO = const(0xA8)
-    COM_OUTPUT_NORMAL = const(0xC0)
-    COM_OUTPUT_FLIP = const(0xC8)
-    DISPLAY_OFFSET = const(0xD3)
-    COM_PINS_HW_CFG = const(0xDA)
-    GPIO = const(0xDC)
-
-    # Timing and driving scheme commands
-    DISPLAY_CLOCK_DIV = const(0xd5)
-    PRECHARGE_PERIOD = const(0xd9)
-    VCOM_DESELECT_LEVEL = const(0xdb)
-
-    def __init__(self, spi=None, cs=None, dc=None, rst=None,
-                 i2c=None, address=0x3C, width=128, height=64, flip=False):
+    def __init__(self, i2c: I2C | None=None, address=0x3C, width=128, height=64, flip=False):
         """Constructor for Display.
 
         Args:
-            spi (Optional Class Spi):  SPI interface for display
-            cs (Optional Class Pin):  Chip select pin
-            dc (Optional Class Pin):  Data/Command pin
-            rst (Optional Class Pin):  Reset pin
             i2c (Optional Class I2C):  I2C interface for display
             address (Optional int): I2C address
             width (Optional int): Screen width (default 128)
             height (Optional int): Screen height (default 64)
             flip (bool):True=Rotate 180 degrees, False=0 degrees (default)
         """
-        if rst is not None:
-            self.rst = rst
-            self.rst.init(self.rst.OUT, value=1)
-        if spi is not None:
-            self.spi = spi
-            self.cs = cs
-            self.dc = dc
-            self.cs.init(self.cs.OUT, value=1)
-            self.dc.init(self.dc.OUT, value=0)
-            self.write_cmd = self.write_cmd_spi
-            self.write_data = self.write_data_spi
-        elif i2c is not None:
+        if i2c is not None:
             self.address = address
             self.i2c = i2c
             self.write_cmd = self.write_cmd_i2c
             self.write_data = self.write_data_i2c
         else:
-            raise RuntimeError('An I2C or SPI interface is required.')
+            raise RuntimeError('An I2C interface is required.')
+        
         self.width = width
         self.height = height
         self.pages = self.height // 8
         self.byte_width = -(-width // 8)  # Ceiling division
         self.buffer_length = self.byte_width * height
+
         # Buffer
         self.mono_image = bytearray(self.buffer_length)
+
         # Frame Buffer
         self.monoFB = FrameBuffer(self.mono_image, width, height, MONO_VLSB)
         self.clear_buffers()
-        self.reset()
+
         # Send initialization commands
         for cmd in (
-                    self.DISPLAY_OFF,
-                    self.DISPLAY_CLOCK_DIV, 0x80,
-                    self.MUX_RATIO, self.height - 1,
-                    self.DISPLAY_OFFSET, 0x00,
-                    self.DISPLAY_START_LINE,
-                    self.CHARGE_PUMP, 0x14,
-                    self.MEMORY_ADDRESSING_MODE, 0x00,
-                    self.SEGMENT_MAP_FLIP if flip else self.SEGMENT_MAP_REMAP,
-                    self.COM_OUTPUT_FLIP if flip else self.COM_OUTPUT_NORMAL,
-                    self.COM_PINS_HW_CFG, 0x02 if (self.height == 32 or
+                    _DISPLAY_OFF,
+                    _DISPLAY_CLOCK_DIV, 0x80,
+                    _MUX_RATIO, self.height - 1,
+                    _DISPLAY_OFFSET, 0x00,
+                    _DISPLAY_START_LINE,
+                    _CHARGE_PUMP, 0x14,
+                    _MEMORY_ADDRESSING_MODE, 0x00,
+                    _SEGMENT_MAP_FLIP if flip else _SEGMENT_MAP_REMAP,
+                    _COM_OUTPUT_FLIP if flip else _COM_OUTPUT_NORMAL,
+                    _COM_PINS_HW_CFG, 0x02 if (self.height == 32 or
                                                    self.height == 16) and
                                                   (self.width != 64)
                     else 0x12,
-                    self.CONTRAST_CONTROL, 0xFF,
-                    self.PRECHARGE_PERIOD, 0xF1,
-                    self. VCOM_DESELECT_LEVEL, 0x40,
-                    self.ENTIRE_DISPLAY_ON,  # output follows RAM contents
-                    self.INVERSION_OFF,  # not inverted
-                    self.DISPLAY_ON):  # on
+                    _CONTRAST_CONTROL, 0xFF,
+                    _PRECHARGE_PERIOD, 0xF1,
+                    _VCOM_DESELECT_LEVEL, 0x40,
+                    _ENTIRE_DISPLAY_ON,  # output follows RAM contents
+                    _INVERSION_OFF,  # not inverted
+                    _DISPLAY_ON):  # on
             self.write_cmd(cmd)
 
         self.clear_buffers()
         self.present()
 
-    def cleanup(self):
-        """Clean up resources."""
-        self.clear()
-        self.sleep()
-        if hasattr(self, 'spi'):
-            self.spi.deinit()
-        print('display off')
-
-    def clear(self):
-        """Clear display.
-        """
-        self.clear_buffers()
-        self.present()
-
-    def clear_buffers(self):
+    def clear_buffers(self) -> None:
         """Clear buffer.
         """
         self.monoFB.fill(0x00)
 
-    def draw_bitmap(self, path, x, y, w, h, invert=False, rotate=0):
+    def draw_bitmap(self, path: str, x: int, y: int, w: int, h: int, invert=False, rotate=0) -> None:
         """Load MONO_HMSB bitmap from disc and draw to screen.
 
         Args:
@@ -170,6 +144,7 @@ class Display(object):
                     for x1 in range(w):
                         fb2.pixel(x1, y1, fb.pixel(x1, y1) ^ 0x01)
                 fb = fb2
+
             elif rotate == 90:  # 90 degrees
                 fb2 = FrameBuffer(bytearray(array_size), h, w, MONO_HMSB)
                 for y1 in range(h):
@@ -180,6 +155,7 @@ class Display(object):
                         else:
                             fb2.pixel(y1, x1, fb.pixel(x1, (h - 1) - y1))
                 fb = fb2
+
             elif rotate == 180:  # 180 degrees
                 fb2 = FrameBuffer(bytearray(array_size), w, h, MONO_HMSB)
                 for y1 in range(h):
@@ -191,6 +167,7 @@ class Display(object):
                             fb2.pixel(x1, y1,
                                       fb.pixel((w - 1) - x1, (h - 1) - y1))
                 fb = fb2
+
             elif rotate == 270:  # 270 degrees
                 fb2 = FrameBuffer(bytearray(array_size), h, w, MONO_HMSB)
                 for y1 in range(h):
@@ -204,7 +181,7 @@ class Display(object):
 
             self.monoFB.blit(fb, x, y)
 
-    def draw_bitmap_raw(self, path, x, y, w, h, invert=False, rotate=0):
+    def draw_bitmap_raw(self, path: str, x: int, y: int, w: int, h: int, invert=False, rotate=0) -> None:
         """Load raw bitmap from disc and draw to screen.
 
         Args:
@@ -222,25 +199,34 @@ class Display(object):
             w, h = h, w  # Swap width & height if landscape
 
         buf_size = w * h
+
         with open(path, "rb") as f:
             if rotate == 0:
                 buf = bytearray(f.read(buf_size))
+
             elif rotate == 90:
                 buf = bytearray(buf_size)
+
                 for x1 in range(w - 1, -1, -1):
                     for y1 in range(h):
                         index = (w * y1) + x1
                         buf[index] = f.read(1)[0]
+
             elif rotate == 180:
                 buf = bytearray(buf_size)
                 for index in range(buf_size - 1, -1, -1):
                     buf[index] = f.read(1)[0]
+
             elif rotate == 270:
                 buf = bytearray(buf_size)
                 for x1 in range(1, w + 1):
                     for y1 in range(h - 1, -1, -1):
                         index = (w * y1) + x1 - 1
                         buf[index] = f.read(1)[0]
+
+            else: # Should never get here
+                buf = bytearray()
+
             if invert:
                 for i, _ in enumerate(buf):
                     buf[i] ^= 0xFF
@@ -248,7 +234,7 @@ class Display(object):
             fbuf = FrameBuffer(buf, w, h, GS8)
             self.monoFB.blit(fbuf, x, y)
 
-    def draw_circle(self, x0, y0, r, invert=False):
+    def draw_circle(self, x0: int, y0: int, r: int, invert=False) -> None:
         """Draw a circle.
 
         Args:
@@ -283,7 +269,7 @@ class Display(object):
             self.draw_pixel(x0 + y, y0 - x, invert)
             self.draw_pixel(x0 - y, y0 - x, invert)
 
-    def draw_ellipse(self, x0, y0, a, b, invert=False):
+    def draw_ellipse(self, x0: int, y0: int, a: int, b: int, invert=False) -> None:
         """Draw an ellipse.
 
         Args:
@@ -342,7 +328,7 @@ class Display(object):
             self.draw_pixel(x0 + x, y0 - y, invert)
             self.draw_pixel(x0 - x, y0 - y, invert)
 
-    def draw_hline(self, x, y, w, invert=False):
+    def draw_hline(self, x: int, y: int, w: int, invert=False) -> None:
         """Draw a horizontal line.
 
         Args:
@@ -355,7 +341,7 @@ class Display(object):
             return
         self.monoFB.hline(x, y, w, int(invert ^ 1))
 
-    def draw_letter(self, x, y, letter, font, invert=False, rotate=False):
+    def draw_letter(self, x: int, y: int, letter: str, font, c=1, rotate: int|bool=False) -> tuple[int, int]:
         """Draw a letter.
 
         Args:
@@ -366,19 +352,22 @@ class Display(object):
             invert (bool): Invert color
             rotate (int): Rotation of letter
         """
-        fbuf, w, h = font.get_letter(letter, invert=invert, rotate=rotate)
+        fbuf, w, h = font.get_letter(letter, c, rotate=rotate)
+
         # Check for errors
-        if w == 0:
+        if fbuf is None:
             return w, h
+        
         # Offset y for 270 degrees and x for 180 degrees
         if rotate == 180:
             x -= w
         elif rotate == 270:
             y -= h
+
         self.monoFB.blit(fbuf, x, y)
         return w, h
 
-    def draw_line(self, x1, y1, x2, y2, invert=False):
+    def draw_line(self, x1: int, y1: int, x2: int, y2: int, invert=False) -> None:
         """Draw a line using Bresenham's algorithm.
 
         Args:
@@ -404,7 +393,7 @@ class Display(object):
             return
         self.monoFB.line(x1, y1, x2, y2, invert ^ 1)
 
-    def draw_lines(self, coords, invert=False):
+    def draw_lines(self, coords: list[list[int]], invert=False) -> None:
         """Draw multiple lines.
 
         Args:
@@ -419,7 +408,7 @@ class Display(object):
             self.draw_line(x1, y1, x2, y2, invert)
             x1, y1 = x2, y2
 
-    def draw_pixel(self, x, y, invert=False):
+    def draw_pixel(self, x: int, y: int, invert=False) -> None:
         """Draw a single pixel.
 
         Args:
@@ -429,9 +418,10 @@ class Display(object):
         """
         if self.is_off_grid(x, y, x, y):
             return
+        
         self.monoFB.pixel(x, y, int(invert ^ 1))
 
-    def draw_polygon(self, sides, x0, y0, r, invert=False, rotate=0):
+    def draw_polygon(self, sides: int, x0: int, y0: int, r: int, invert=False, rotate=0) -> None:
         """Draw an n-sided regular polygon.
 
         Args:
@@ -455,7 +445,7 @@ class Display(object):
         # Cast to python float first to fix rounding errors
         self.draw_lines(coords, invert)
 
-    def draw_rectangle(self, x, y, w, h, invert=False):
+    def draw_rectangle(self, x: int, y: int, w: int, h: int, invert=False) -> None:
         """Draw a rectangle.
 
         Args:
@@ -467,7 +457,7 @@ class Display(object):
         """
         self.monoFB.rect(x, y, w, h, int(invert ^ 1))
 
-    def draw_sprite(self, fbuf, x, y, w, h):
+    def draw_sprite(self, fbuf: FrameBuffer, x: int, y: int, w: int, h: int) -> None:
         """Draw a sprite.
         Args:
             fbuf (FrameBuffer): Buffer to draw.
@@ -478,12 +468,13 @@ class Display(object):
         """
         x2 = x + w - 1
         y2 = y + h - 1
+
         if self.is_off_grid(x, y, x2, y2):
             return
+        
         self.monoFB.blit(fbuf, x, y)
 
-    def draw_text(self, x, y, text, font, invert=False,
-                  rotate=0, spacing=1):
+    def draw_text(self, x: int, y: int, text: str, font, c=1, rotate=0, spacing=1) -> None:
         """Draw text.
 
         Args:
@@ -497,41 +488,45 @@ class Display(object):
         """
         for letter in text:
             # Get letter array and letter dimensions
-            w, h = self.draw_letter(x, y, letter, font, invert, rotate)
+            w, h = self.draw_letter(x, y, letter, font, c, rotate)
+
             # Stop on error
             if w == 0 or h == 0:
                 return
+            
             if rotate == 0:
                 # Fill in spacing
                 if spacing:
-                    self.fill_rectangle(x + w, y, spacing, h, invert ^ 1)
+                    self.fill_rectangle(x + w, y, spacing, h, 1 - c)
+                    
                 # Position x for next letter
                 x += (w + spacing)
+
             elif rotate == 90:
                 # Fill in spacing
                 if spacing:
-                    self.fill_rectangle(x, y + h, w, spacing, invert ^ 1)
+                    self.fill_rectangle(x, y + h, w, spacing, 1 - c)
                 # Position y for next letter
                 y += (h + spacing)
             elif rotate == 180:
                 # Fill in spacing
                 if spacing:
                     self.fill_rectangle(x - w - spacing, y, spacing,
-                                        h, invert ^ 1)
+                                        h, 1 - c)
                 # Position x for next letter
                 x -= (w + spacing)
             elif rotate == 270:
                 # Fill in spacing
                 if spacing:
                     self.fill_rectangle(x, y - h - spacing, w, spacing,
-                                        invert ^ 1)
+                                        1 - c)
                 # Position y for next letter
                 y -= (h + spacing)
             else:
                 print("Invalid rotation.")
                 return
 
-    def draw_text8x8(self, x, y, text):
+    def draw_text8x8(self, x: int, y: int, text: str, color=1) -> None:
         """Draw text using built-in MicroPython 8x8 bit font.
 
         Args:
@@ -542,9 +537,10 @@ class Display(object):
         # Confirm coordinates in boundary
         if self.is_off_grid(x, y, x + 8, y + 8):
             return
-        self.monoFB.text(text, x, y)
+        
+        self.monoFB.text(text, x, y, color)
 
-    def draw_vline(self, x, y, h, invert=False):
+    def draw_vline(self, x: int, y: int, h: int, invert=False) -> None:
         """Draw a vertical line.
 
         Args:
@@ -556,9 +552,10 @@ class Display(object):
         # Confirm coordinates in boundary
         if self.is_off_grid(x, y, x, y + h):
             return
+        
         self.monoFB.vline(x, y, h, int(invert ^ 1))
 
-    def fill_circle(self, x0, y0, r, invert=False):
+    def fill_circle(self, x0: int, y0: int, r: int, invert=False) -> None:
         """Draw a filled circle.
 
         Args:
@@ -586,7 +583,7 @@ class Display(object):
             self.draw_vline(x0 - y, y0 - x, 2 * x + 1, invert)
             self.draw_vline(x0 + y, y0 - x, 2 * x + 1, invert)
 
-    def fill_ellipse(self, x0, y0, a, b, invert=False):
+    def fill_ellipse(self, x0: int, y0: int, a: int, b: int, invert=False) -> None:
         """Draw a filled ellipse.
 
         Args:
@@ -638,7 +635,7 @@ class Display(object):
             self.draw_line(x0 + x, y0 - y, x0 + x, y0 + y, invert)
             self.draw_line(x0 - x, y0 - y, x0 - x, y0 + y, invert)
 
-    def fill_rectangle(self, x, y, w, h, invert=False):
+    def fill_rectangle(self, x: int, y: int, w: int, h: int, invert: int|bool=False) -> None:
         """Draw a filled rectangle.
 
         Args:
@@ -652,7 +649,7 @@ class Display(object):
             return
         self.monoFB.fill_rect(x, y, w, h, int(invert ^ 1))
 
-    def fill_polygon(self, sides, x0, y0, r, invert=False, rotate=0):
+    def fill_polygon(self, sides: int, x0: int, y0: int, r: int, invert=False, rotate=0) -> None:
         """Draw a filled n-sided regular polygon.
 
         Args:
@@ -734,7 +731,7 @@ class Display(object):
         for y, x in xdict.items():
             self.draw_hline(x[0], y, x[1] - x[0] + 2, invert)
 
-    def flip(self, flip=True):
+    def flip(self, flip=True) -> None:
         """Set's the display orientation to either 0 or 180 degrees.
 
         Args:
@@ -743,13 +740,13 @@ class Display(object):
             Anything currently displayed won't flip until present is called
         """
         if flip:
-            self.write_cmd(self.SEGMENT_MAP_FLIP)  # Set segment remap
-            self.write_cmd(self.COM_OUTPUT_FLIP)  # Set COM output scan dir
+            self.write_cmd(_SEGMENT_MAP_FLIP)  # Set segment remap
+            self.write_cmd(_COM_OUTPUT_FLIP)  # Set COM output scan dir
         else:
-            self.write_cmd(self.SEGMENT_MAP_REMAP)  # Set segment remap
-            self.write_cmd(self.COM_OUTPUT_NORMAL)  # Set COM output scan dir
+            self.write_cmd(_SEGMENT_MAP_REMAP)  # Set segment remap
+            self.write_cmd(_COM_OUTPUT_NORMAL)  # Set COM output scan dir
 
-    def is_off_grid(self, xmin, ymin, xmax, ymax):
+    def is_off_grid(self, xmin: int, ymin: int, xmax: int, ymax: int) -> bool:
         """Check if coordinates extend past display boundaries.
 
         Args:
@@ -761,22 +758,20 @@ class Display(object):
             boolean: False = Coordinates OK, True = Error.
         """
         if xmin < 0:
-            print('x-coordinate: {0} below minimum of 0.'.format(xmin))
+            print(f'warn-x: {xmin} < 0')
             return True
         if ymin < 0:
-            print('y-coordinate: {0} below minimum of 0.'.format(ymin))
+            print(f'warn-y: {ymin} < 0')
             return True
-        if xmax >= self.width:
-            print('x-coordinate: {0} above maximum of {1}.'.format(
-                xmax, self.width - 1))
+        if xmax > self.width:
+            print(f'warn-x: {xmax} > {self.width}')
             return True
-        if ymax >= self.height:
-            print('y-coordinate: {0} above maximum of {1}.'.format(
-                ymax, self.height - 1))
+        if ymax > self.height:
+            print(f'warn-y: {ymax} > {self.height}')
             return True
         return False
 
-    def load_sprite(self, path, w, h, invert=False, rotate=0):
+    def load_sprite(self, path: str, w: int, h: int, invert=False, rotate=0) -> FrameBuffer:
         """Load MONO_HMSB bitmap from disc to sprite.
 
         Args:
@@ -837,46 +832,60 @@ class Display(object):
 
             return fb
 
-    def present(self):
+    def present(self) -> None:
         """Present image to display.
         """
         x0 = 0
         x1 = self.width - 1
+
         if self.width == 64:
             # displays with width of 64 pixels are shifted by 32
             x0 += 32
             x1 += 32
-        self.write_cmd(self.COLUMN_ADDRESS)
+
+        self.write_cmd(_COLUMN_ADDRESS)
         self.write_cmd(x0)
         self.write_cmd(x1)
-        self.write_cmd(self.PAGE_ADDRESS)
+        self.write_cmd(_PAGE_ADDRESS)
         self.write_cmd(0)
         self.write_cmd(self.pages - 1)
         self.write_data(self.mono_image)
 
-    def reset(self):
-        """Perform reset."""
-        if hasattr(self, 'rst'):
-            self.rst(1)
-            sleep_ms(1)
-            self.rst(0)
-            sleep_ms(10)
-            self.rst(1)
+    def contrast(self, contrast: int) -> None:
+        """
+        Change the current display contrast (brightness).
+        """
+        self.write_cmd(_CONTRAST_CONTROL)
+        self.write_cmd(contrast)
 
-    def sleep(self):
+    def set_vcomdesel(self, arg: int) -> None:
+        """
+        Set the V_com deselect level (0-7)
+        """
+        self.write_cmd(_VCOM_DESELECT_LEVEL)
+        self.write_cmd(arg << 4)
+
+    def set_precharge(self, p1: int, p2: int) -> None:
+        """
+        Set the precharge interval for the display matrix. Augments contrast setting.
+        """
+        self.write_cmd(_PRECHARGE_PERIOD)
+        self.write_cmd((p2 << 4) | p1)
+
+    def sleep(self) -> None:
         """Put display to sleep."""
-        self.write_cmd(self.DISPLAY_OFF)
+        self.write_cmd(_DISPLAY_OFF)
 
-    def scroll_start(self):
+    def scroll_start(self) -> None:
         """Activates scrolling after setup."""
-        self.write_cmd(self.SCROLL_ACTIVATE)
+        self.write_cmd(_SCROLL_ACTIVATE)
 
-    def scroll_stop(self):
+    def scroll_stop(self) -> None:
         """Stops any scrolling effect."""
-        self.write_cmd(self.SCROLL_DEACTIVATE)
+        self.write_cmd(_SCROLL_DEACTIVATE)
 
     def scroll_horizontal_manual(self, direction="right", start_page=0,
-                                 end_page=7, start_column=0, end_column=127):
+                                 end_page=7, start_column=0, end_column=127) -> None:
         """Manual horizontal scrolling.
 
         Args:
@@ -891,9 +900,9 @@ class Display(object):
             Any existing scrolling should be stopped before first call.
         """
         if direction == "right":
-            cmd = self.SCROLL_BY_ONE_RIGHT
+            cmd = _SCROLL_BY_ONE_RIGHT
         else:
-            cmd = self.SCROLL_BY_ONE_LEFT
+            cmd = _SCROLL_BY_ONE_LEFT
         self.write_cmd(cmd)  # Left or right command
         self.write_cmd(0x00)  # Dummy byte - column scroll offset (no effect)
         self.write_cmd(start_page)  # Start page address
@@ -905,7 +914,7 @@ class Display(object):
 
     def scroll_horizontal_setup(self, direction="right", start_page=0,
                                 end_page=7, interval=0, start_column=0,
-                                end_column=127):
+                                end_column=127) -> None:
         """Configures horizontal only scrolling.
 
         Args:
@@ -920,9 +929,9 @@ class Display(object):
         """
         self.scroll_stop()  # Any scrolling should be stopped
         if direction == "right":
-            cmd = self.SCROLL_HORIZONTAL_RIGHT
+            cmd = _SCROLL_HORIZONTAL_RIGHT
         else:
-            cmd = self.SCROLL_HORIZONTAL_LEFT
+            cmd = _SCROLL_HORIZONTAL_LEFT
         self.write_cmd(cmd)  # Left or right command
         self.write_cmd(0x00)  # Dummy byte - column scroll offset (no effect)
         self.write_cmd(start_page)  # Start page address
@@ -935,7 +944,7 @@ class Display(object):
     def scroll_setup(self, direction=["up"], start_page=0,
                      end_page=7, first_row=0, total_rows=64,
                      interval=0, start_column=0, end_column=127,
-                     vertical_speed=1):
+                     vertical_speed=1) -> None:
         """Configures advanced scrolling setup.
 
         Args:
@@ -956,22 +965,26 @@ class Display(object):
                     ), '"up" & "down" cannot both be in the direction list.'
         assert not ({"left", "right"} <= set(direction)
                     ), '"left" & "right" cannot both be in the direction list.'
+        
         self.scroll_stop()  # Any scrolling should be stopped
-        self.write_cmd(self.SCROLL_SETUP_VERTICAL_AREA)  # Vertical scroll area
+        self.write_cmd(_SCROLL_SETUP_VERTICAL_AREA)  # Vertical scroll area
         self.write_cmd(first_row)  # First row of scroll region
         self.write_cmd(total_rows)  # Number of  rows to scroll
         horizontal = 0  # No horizontal movement
-        cmd = self.SCROLL_VERTICAL_LEFT  # Left or no horizontal
+        cmd = _SCROLL_VERTICAL_LEFT  # Left or no horizontal
+
         if "right" in direction:
-            cmd = self.SCROLL_VERTICAL_RIGHT  # Right horizontal scroll
+            cmd = _SCROLL_VERTICAL_RIGHT  # Right horizontal scroll
             horizontal = 1  # Horizontal movement
         elif "left" in direction:
             horizontal = 1  # Horizontal movement
+
         self.write_cmd(cmd)  # Vertical scroll left or right
         self.write_cmd(horizontal)  # Horizontal scroll
         self.write_cmd(start_page)  # Start page address
         self.write_cmd(interval)  # Time interval between each scroll steps
         self.write_cmd(end_page)  # End page address
+
         if "down" in direction:
             vertical_speed = 64 - vertical_speed  # Invert for down
         elif "up" not in direction:
@@ -980,11 +993,11 @@ class Display(object):
         self.write_cmd(start_column)  # Start column
         self.write_cmd(end_column)  # End column
 
-    def wake(self):
+    def wake(self) -> None:
         """Wake display from sleep."""
-        self.write_cmd(self.DISPLAY_ON)
+        self.write_cmd(_DISPLAY_ON)
 
-    def write_cmd_i2c(self, command, *args):
+    def write_cmd_i2c(self, command: int, *args) -> None:
         """Write command to display using I2C.
 
         Args:
@@ -997,7 +1010,7 @@ class Display(object):
             #  0x40 -> Co=0, D/C#=1
             self.i2c.writeto_mem(self.address, 0x40, bytearray(args))
 
-    def write_data_i2c(self, data):
+    def write_data_i2c(self, data: bytes) -> None:
         """Write data to display.
 
         Args:
@@ -1005,29 +1018,3 @@ class Display(object):
         """
         #  0x40 -> Co=0, D/C#=1
         self.i2c.writeto_mem(self.address, 0x40, data)
-
-    def write_cmd_spi(self, command, *args):
-        """Write command to display.
-
-        Args:
-            command (byte): Display command code.
-            *args (optional bytes): Data to transmit.
-        """
-        self.dc(0)
-        self.cs(0)
-        self.spi.write(bytearray([command]))
-        self.cs(1)
-        # Handle any passed data
-        if len(args) > 0:
-            self.write_data(bytearray(args))
-
-    def write_data_spi(self, data):
-        """Write data to display.
-
-        Args:
-            data (bytes): Data to transmit.
-        """
-        self.dc(1)
-        self.cs(0)
-        self.spi.write(data)
-        self.cs(1)

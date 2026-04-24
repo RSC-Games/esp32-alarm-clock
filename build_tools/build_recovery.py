@@ -1,8 +1,7 @@
+import build_cmdlets
 import binascii
 import pathlib
 import hashlib
-import mkfsimg
-import shutil
 import sys
 import os
 
@@ -11,45 +10,6 @@ MPY_CROSS_PATH = f"{pathlib.Path(__file__).parent}/mpy-cross.exe"
 MPY_CROSS_FLAGS = "-O2"
 RECOVERY_IMAGER_PATH = f"{pathlib.Path(__file__).parent}/payloads/factory_imager_base.py"
 MAX_RECOVERY_IMG_SIZE = int(28*1024)  # 2 kB FREE IN IMAGE (4 sectors)
-
-def _create_build_dir(in_tree: str, build_tree: str):
-    if os.path.exists(build_tree):
-        print(" -- build tree exists; removing")
-        shutil.rmtree(build_tree)
-
-    # Separate build directory to operate in.
-    print(" -- generating build directory")
-    shutil.copytree(in_tree, build_tree)
-
-def _compile_code(build_tree: str) -> bool:
-    env_path = os.getcwd()
-    os.chdir(build_tree)
-
-    # Recursively compile all .mpy files inside
-    for folder, _, files in os.walk("."):
-        #print(f"in folder {folder}")
-
-        for file in files:
-            if os.path.splitext(file)[1] != ".py":
-                continue
-
-            print(f" .. mpy {file}")
-            ret = os.system(f"{MPY_CROSS_PATH} {MPY_CROSS_FLAGS} {folder}/{file}")
-
-            if ret != 0:
-                print(f" -- error while compiling {file}")
-                return False
-            
-            # Avoid leaving stale source files in the final image
-            os.unlink(f"{folder}/{file}")
-
-    os.chdir(env_path) 
-    return True
-
-def _make_bootable_image(out_img: str, build_tree: str) -> bool:
-    print(" -- building recovery rom filesystem")
-    return mkfsimg.create_fs_img_recovery(build_tree, out_img, MAX_RECOVERY_IMG_SIZE)
-
 
 def _generate_factory_imager(out_img_path: str) -> bool:
     print(" -- generating recovery uart payload")
@@ -92,7 +52,6 @@ def _generate_factory_imager(out_img_path: str) -> bool:
     print(" -- recovery uart payload built")
     return True
 
-
 # Compile stages (recovery builder)
 # - Create build directory.
 # - Compile all code in the directory
@@ -105,13 +64,13 @@ def main(out_img: str, in_tree: str):
     os.chdir(pathlib.Path(in_tree).parent)
     build_dir = f"{in_tree}_build"
 
-    _create_build_dir(in_tree, build_dir)
+    build_cmdlets.create_build_dir(in_tree, build_dir)
 
-    if not _compile_code(build_dir):
+    if not build_cmdlets.compile_code(MPY_CROSS_PATH, MPY_CROSS_FLAGS, build_dir):
         sys.exit(-1)
 
-    if not _make_bootable_image(out_img, build_dir):
-        print(" -- failed to create fs img")
+    if not build_cmdlets.make_bootable_image(out_img, build_dir, MAX_RECOVERY_IMG_SIZE):
+        print(" -- failed to create recovery fs")
         sys.exit(-1)
 
     if not _generate_factory_imager(out_img):

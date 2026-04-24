@@ -20,7 +20,7 @@ micropython.kbd_intr(-1)
 
 from ucrypto.ufastrsa.rsa import RSA
 from __nvs_perms import ReadOnlyNVS
-from typing import NoReturn, Any
+from typing import NoReturn, Any, Callable
 import logs
 import sys
 import gc
@@ -40,6 +40,10 @@ _FORCE_NVS_LOCKOUT = micropython.const(False)
 _FORCE_DISABLE_SD_BOOT = micropython.const(False)
 
 ################################## END CONFIGURATION ####################################
+
+# REBOOT2BOOTLOADER:
+_R2B_RECOVERY_IMG = micropython.const(0)
+_R2B_UART = micropython.const(1)
 
 # USB/UART recovery bootloader (data link layer)
 _UART_RCM_CONN_RETRIES = micropython.const(10)
@@ -125,6 +129,7 @@ def gc_clean(func):
 #   4 short: <firmware>.img hash on dbx blacklist (provided at update time in separate partition)
 #   5 short: <firmware>.img unmountable (must be mounted as read-only)
 #   6 short: cannot locate firmboot.bin in <firmware>.img (also used for SD boot)
+#   7 short: recovery.img could not be found/unbootable
 #
 # SD BOOT ERRORS (3 long flashes, repeats):
 #   1 short: cannot locate <firmware>.img on SD
@@ -143,8 +148,8 @@ def gc_clean(func):
 #
 # This function is NOT erased at boot lockout.
 def _fatal_error_led(pubkey: RSA | None, boot_nvs: ReadOnlyNVS | None, long_flashes: int, 
-                     short_flashes: int, reboot: bool=False) -> NoReturn:
-    from machine import reset, Pin
+                     short_flashes: int, reboot: Callable | None=None) -> NoReturn:
+    from machine import Pin
     from time import sleep_ms
 
     led_internal = Pin(_DEBUG_LED_GPIO, Pin.OUT)
@@ -168,8 +173,8 @@ def _fatal_error_led(pubkey: RSA | None, boot_nvs: ReadOnlyNVS | None, long_flas
         sleep_ms(_DEBUG_FLASH_WAIT_MS)
 
         # Since uart_rcm also calls here, avoid a technical infinite loop.
-        if reboot:
-            reset()
+        if reboot is not None:
+            reboot()
 
         # Allow USB recovery at all times rather than just when SD boot
         # is disabled.
@@ -284,10 +289,12 @@ def _boot_launch_uart_rcm(pubkey: RSA, nvs: ReadOnlyNVS) -> NoReturn:
         gc.collect()
 
     if not connected:
+        from machine import reset
+
         # Fatal: no pc connection
         print()
         logs.print_warning("boot", "connection to pc failed; rebooting")
-        _fatal_error_led(None, None, 4, 1, reboot=True)
+        _fatal_error_led(None, None, 4, 1, reboot=reset)
 
     # Command packet parser.
     header_sz = struct.calcsize(_UART_RCM_HEADER)
@@ -481,13 +488,13 @@ def _boot_exec_signed_firm(pubkey: RSA, nvs: ReadOnlyNVS, sig: memoryview[int], 
             firmboot.firm_entry(pubkey, nvs)
         else:
             logs.print_error("boot", "payload not executable")
-            _fatal_error_led(None, None, 4, 2, reboot=True)
+            _fatal_error_led(None, None, 4, 2, reboot=reset)
         
     except Exception as ie:
         # Payload execution error
         logs.print_error("boot", "payload exec failed")
         sys.print_exception(ie)
-        _fatal_error_led(None, None, 4, 2, reboot=True)
+        _fatal_error_led(None, None, 4, 2, reboot=reset)
 
     # Payload finished executing.
     reset()
@@ -763,7 +770,7 @@ def _boot_lockout(nvs: ReadOnlyNVS, nvs_lockout=True) -> None:
 # TODO: Better manage bootloader memory (to reduce fragmentation)
 # NOTE: Pointer erased at boot lockout.
 def boot_main() -> None:
-    from machine import Pin
+    from machine import Pin, reset_cause, DEEPSLEEP_RESET
     from vfs import umount
 
     logs.print_info("boot", "secure bootloader copyleft 2026 rsc games")
@@ -791,16 +798,38 @@ def boot_main() -> None:
     sd_boot_enabled = boot_nvs.get_i32("en_sd_boot") == 1
     sd_boot = sd_boot_enabled and boot_pressed
 
+    # FIX: RESET2BOOTLOADER patch- reboot to UART/recovery.img from the app
+    reboot2uart = False
+    reboot2recovery = False
+
+    # Bootloader command from app.
+    #   cmd 0: Launch recovery.img
+    #   cmd 1: Launch uart boot
+    #   cmd 2+: Pass through to application.
+    if reset_cause() == DEEPSLEEP_RESET:
+        from machine import RTC
+        cmd = RTC().memory()[0]
+
+        if cmd == _R2B_RECOVERY_IMG:
+            logs.print_info("boot", "reboot2bootloader: requested recovery.img boot")
+            reboot2recovery = True
+        elif cmd == _R2B_UART:
+            logs.print_info("boot", "reboot2bootloader: requested uart boot")
+            reboot2uart = True
+
     # UART BOOT MODE
     # Alternate code path to repair/reinstall firmware for devices which cannot
     # boot from the SD or have elected not to allow that boot mode.
-    if (_FORCE_DISABLE_SD_BOOT or not sd_boot_enabled) and boot_pressed:
+    if reboot2uart or ((_FORCE_DISABLE_SD_BOOT or not sd_boot_enabled) and boot_pressed):
         _boot_launch_uart_rcm(pubkey, boot_nvs) # does not return
 
     _boot_mount_root(pubkey, boot_nvs, sd_boot)
 
     # Load firmware package
-    err_code = _boot_validate_firmware(pubkey, boot_nvs, f"{boot_nvs.get_str("firm")}.img", sd_boot)
+    if not reboot2recovery:
+        err_code = _boot_validate_firmware(pubkey, boot_nvs, f"{boot_nvs.get_str("firm")}.img", sd_boot)
+    else:
+        err_code = (2, 7)  # Missing recovery.img
 
     # Load recovery module (if possible; otherwise panic)
     if err_code is not None:
@@ -832,13 +861,20 @@ def boot_main() -> None:
         if hasattr(firmboot, "app_main") and callable(firmboot.app_main):
             firmboot.app_main(boot_nvs)
 
-    except Exception as ie:
+    except BaseException as ie:
         logs.print_error("boot", "fatal exception encountered; printing backtrace")
         sys.print_exception(ie)
 
     finally:
+        def reboot_to_recovery():
+            from machine import deepsleep, RTC
+            RTC().memory(_R2B_RECOVERY_IMG)
+            logs.print_warning("boot", "rebooting to recovery.img")
+
+            deepsleep(1)
+
         # Application error (should never return)
-        _fatal_error_led(pubkey, boot_nvs, 5, 1, reboot=True)
+        _fatal_error_led(pubkey, boot_nvs, 5, 1, reboot=reboot_to_recovery)
 
 try:
     if __name__ == "__main__":

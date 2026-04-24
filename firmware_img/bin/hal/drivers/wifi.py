@@ -1,3 +1,4 @@
+
 from hal.fbcon import GLOBAL_FBCON
 from __nvs_perms import ReadOnlyNVS
 from network import WLAN
@@ -5,6 +6,16 @@ import network
 import logs
 import time
 
+_STATUS_DECODE = {
+    network.STAT_GOT_IP: "got ip",
+    network.STAT_ASSOC_FAIL: "assoc fail",
+    network.STAT_BEACON_TIMEOUT: "beacon timeout",
+    network.STAT_CONNECT_FAIL: "conn fail",
+    network.STAT_HANDSHAKE_TIMEOUT: "4way timeout",
+    network.STAT_NO_AP_FOUND: "not found",
+    network.STAT_NO_AP_FOUND_W_COMPATIBLE_SECURITY: "wrong security",
+    network.STAT_WRONG_PASSWORD: "wrong password"
+}
 
 # Network configuration NVS:
 # Stores all of the currently associated network devices.
@@ -25,7 +36,7 @@ import time
 class NetworkConfig(ReadOnlyNVS):
     def __init__(self) -> None:
         super().__init__("config-wifi")
-        logs.print_warning("net", "WiFi configuration info is not encrypted!")
+        logs.print_warning("net", "net cfg not encrypted")
 
         try:
             self.get_i32("slots")
@@ -56,18 +67,24 @@ class NetworkConfig(ReadOnlyNVS):
         been so marked. Commit is deferred.
         """
         if self.slot_used(slot_id):
-            raise OSError("cannot allocate used slot!")
+            raise OSError("EEXISTS")
         
         slots = self.get_i32("slots")
         slots |= 1 << slot_id
         self.set_i32("slots", slots)
+
+    def used_slots(self) -> list[int]:
+        """
+        Get a list of the currently used slots (for iterating through)
+        """
+        return [i for i in range(8) if self.slot_used(i)]
 
     def free_slot(self, slot_id: int) -> None:
         """
         Mark a slot as freed. The changes are instantly committed.
         """
         if not self.slot_used(slot_id):
-            raise OSError("cannot free already freed slot!")
+            raise OSError("EINVAL")
         
         # Prevent dangling reference to the now unused slot.
         if self.get_i32("last") == slot_id:
@@ -141,14 +158,24 @@ class NetworkConfig(ReadOnlyNVS):
         psk = self.get_str(f"net{slot}_psk")
 
         return ssid, auth, psk
+    
+    def get_slot_by_ssid(self, ssid: str) -> int | None:
+        """
+        Get the slot id of the provided ssid, if it exists.
+        """
+        for slot in self.used_slots():
+            s_ssid, _, _ = self.get_slot(slot)
 
+            if s_ssid == ssid:
+                return slot
+
+        return None
 
 class WiFiManager:
     def __init__(self):
         self.net_cfg = NetworkConfig()
         self.wlan = WLAN(WLAN.IF_STA)
         self.scan_results = []
-
 
     # TODO: Bring up should run in a separate thread
     def bring_up(self) -> bool:
@@ -157,7 +184,7 @@ class WiFiManager:
         slots.
         """
         self.wlan.active(True)
-        self.scan_results = self.wlan.scan()
+        self.rescan()
         self.wlan.config(reconnects=10)
 
         # Try most recently associated network
@@ -183,7 +210,7 @@ class WiFiManager:
                 return True
 
         # No networks available/registered. 
-        logs.print_warning("recovery", "no networks available")
+        logs.print_warning("recovery", "no networks found")
         return False
     
     def link_is_up(self) -> bool:
@@ -206,16 +233,24 @@ class WiFiManager:
 
         # Wait for proper connection.
         while self.wlan.status() == network.STAT_CONNECTING:
-            print('waiting')
             time.sleep_ms(100)
 
         network_state = self.wlan.status()
-        logs.print_info("net", f"got ending wifi state {network_state}")
+        logs.print_info("net", f"nic state {self.decode_status()}")
 
         return network_state == network.STAT_GOT_IP
     
     def get_ip(self) -> str:
+        """
+        Get the device's current local IP address.
+        """
         return self.wlan.ipconfig("addr4")[0]
+    
+    def has_free_slots(self) -> bool:
+        """
+        Determine if the NIC has still remaining registration slots.
+        """
+        return self.net_cfg.get_free_slot() is not None
     
     def assoc_new(self, network: tuple[str, int, str]) -> bool:
         """
@@ -233,3 +268,28 @@ class WiFiManager:
         
         self.net_cfg.set_slot(new_slot, *network)
         return True
+    
+    def forget_network(self, network: str) -> None:
+        """
+        Delete an associated network (provided its SSID)
+        """
+        slot = self.net_cfg.get_slot_by_ssid(network)
+
+        if slot is None:
+            raise OSError("ENOENT")
+
+        self.net_cfg.free_slot(slot)
+    
+    def rescan(self) -> list[tuple[bytes, bytes, int, int, int, int]]:
+        """
+        Scan the local area for wifi access points.
+        """
+        self.scan_results = self.wlan.scan()
+        return self.scan_results
+    
+    def decode_status(self) -> str:
+        """
+        Convert the integer status code to something readable.
+        """
+        status = self.wlan.status()
+        return _STATUS_DECODE.get(status, f"{status}")

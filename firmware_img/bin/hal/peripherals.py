@@ -1,7 +1,8 @@
-from hal.drivers import wifi
+from hal.drivers import wifi, ssd1309
 from machine import Pin, ADC, I2C
 from micropython import const
 from time import sleep_ms
+from hal import fbcon
 
 _DEBOUNCE_INT_MS = const(90)
 
@@ -22,11 +23,8 @@ _PIN_SD_CLK = const(14)
 _PIN_SD_CS = const(15)
 
 _OLED_I2C_BUS_ID = const(0)
-_OLED_I2C_FREQ = const(1_000_000)
-_PIN_OLED_SCL = const(18)
-_PIN_OLED_SDA = const(19)
+_OLED_I2C_FREQ = const(400_000)
 
-# TODO: Determine if using D25/26 improves speaker driving
 _PIN_SPKR_OUT = const(25)
 
 # PIN DRIVES

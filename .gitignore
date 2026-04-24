@@ -3,4 +3,6 @@ recovery.img*
 clock_firm.img*
 recovery_img_build/
 recovery_img_build/*
+firmware_img_build/
+firmware_img_build/*
 **/__pycache__/

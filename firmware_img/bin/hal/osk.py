@@ -1,9 +1,14 @@
 # osk API: Gets user input on screen.
 # Code original copyright 2022; relicensed under MIT with minimal changes.
+# NOTE: This layout is VERY different from the recovery image OSK.
 from hal import peripherals as dev
 from micropython import const
+import xglcd_font
 
-_OSK_WIDTH = const(128)
+_OSK_WIDTH = const(96)
+_OSK_CHARSET_PX_OFFSET = const(23)
+_OSK_5x7_FONT_PATH = const("/firm/res/fonts/Neato5x7.c")
+_OSK_3x5_FONT_PATH = const("/firm/res/fonts/Tiny3x5.c")
 
 LAYOUT_KEYBOARD = const(0)
 LAYOUT_NUMPAD = const(1)
@@ -20,7 +25,6 @@ def prompt_text(key_layout: int, max_chars: int, hide_text=False) -> str:
 
     Returns:
         str: Returns a text string containing the value entered.
-
     """
     
     # Displayed keyboard sets (qwerty/QWERTY/symbols)
@@ -59,83 +63,76 @@ def prompt_text(key_layout: int, max_chars: int, hide_text=False) -> str:
 		]
     }
     
-    # Erase the display.
     dev.DISPLAY.clear_buffers()
-    
-    # Now begin querying the user for input, based on the key set.
-    if key_layout == 0:
-        return _do_osk_input(["UPPER", "LOWER", "SYM"], qwerty_key_set, max_chars, hide_text)       
-        
-    # Use the numpad in this keyboard layout.
-    elif key_layout == 1:
-        return _do_osk_input(["NUM"], numpad_key_set, max_chars, hide_text)
-        
-    else:
-        raise ValueError("invalid layout")
 
+    keymaps = ["UPPER", "LOWER", "SYM"] if key_layout == LAYOUT_KEYBOARD else ["NUM"]
+    keyset = qwerty_key_set if key_layout == LAYOUT_KEYBOARD else numpad_key_set
+
+    if key_layout not in (LAYOUT_KEYBOARD, LAYOUT_NUMPAD):
+        raise ValueError(f"invalid layout: {key_layout}")
+    
+    return _do_osk_input(keymaps, keyset, max_chars, hide_text)
 
 # Display an OSK with the provided keyboard layout and arguments supplied by the prompt_text
 # wrapper.
-def _do_osk_input(subcharsets: list[str], key_set: dict[str, list], max_chars: int, hide_text: bool) -> str:
-    subcharset = subcharsets[0]  # Default keyboard
-    char_string = []  # Typed data
-    starting_offset = 23  # 
-    pos_x = 0
-    pos_y = 0
+def _do_osk_input(keymaps: list[str], key_set: dict[str, list], max_chars: int, hide_text: bool) -> str:
+    font_5x7 = xglcd_font.XglcdFont(_OSK_5x7_FONT_PATH, 5, 7)
+    font_3x5 = xglcd_font.XglcdFont(_OSK_3x5_FONT_PATH, 3, 5)
+
+    keymap = keymaps[0]  # Default keyboard
+    char_string = []  # User entered data
+    col = 0
+    row = 0
     
     # Stores coordinates and character aliases in a series of lists.
     # Values stored:
     # Index: Value
-    #  Name: (x, y) for coordinate value on the "char grid."
-    #     0: Alias
-    #     1: Char (May be the same as the alias).
-    #     2: (x, y, w, h) for storing on display location and size of rect.
-    # Compile the subcharset charset (subcharset).
-    char_coords_aliases = _compile_charset(key_set[subcharset], starting_offset)
+    #  Name: (x, y) for coordinate value on the "char grid"
+    #     0: Key name (shown on screen)
+    #     1: Key Value (May be the same as the alias).
+    #     2: (x, y, w, h) for draw location and size of draw rect.
+    # Compile the active keymap charset.
+    char_coords_aliases = _compile_charset(key_set[keymap], _OSK_CHARSET_PX_OFFSET)
     
     while True:
-        # Wait for user input.
         # A_BTN HANDLER: ENTER A CHARACTER.
-        if dev.get_button_wait(dev.BTN_CONFIRM):                
-            # Recompile the alias list if the selected keyboard changed.
-            cur_char = char_coords_aliases[(pos_x, pos_y)]
+        if dev.get_button_wait(dev.BTN_CONFIRM):
+            cur_char = char_coords_aliases[(col, row)]
             
-            # Load different menus if an option.
+            # Special key (RETURN) (enter)
             if cur_char[1] == "RET":
                 # Return the list of characters after making it a string.
                 dev.wait_buttons_all_released()
                 return "".join(char_string)
             
+            # Special key (SHIFT)
             elif cur_char[1] == "SHFT":
-                # Check the case. If in the symbols case, ignore.
-                if subcharset == subcharsets[0]:
-                    subcharset = subcharsets[1]
-                elif subcharset == subcharsets[1]:
-                    subcharset = subcharsets[0]
+                # Switch to upper/lowercase
+                if keymap == keymaps[0]:
+                    keymap = keymaps[1]
+                elif keymap == keymaps[1]:
+                    keymap = keymaps[0]
                     
-                # Now we want to recompile the charset to correspond with the new characters.
-                char_coords_aliases = _compile_charset(key_set[subcharset], starting_offset)
+                # Keymap changed; generate new one
+                char_coords_aliases = _compile_charset(key_set[keymap], _OSK_CHARSET_PX_OFFSET)
                 dev.wait_buttons_all_released()
                 continue
                 
+            # Special key (SYMBOLS)
             elif cur_char[1] == "SYM":
-                # Switch the charset to symbols if it is not, otherwise set to lowercase.
-                if subcharset == subcharsets[2]:
-                    subcharset = subcharsets[1]
-                else:
-                    subcharset = subcharsets[2]
+                # Switch between lowercase or symbols
+                keymap = keymaps[1] if keymap == keymaps[2] else keymaps[2]
                 
-                # Now we want to recompile the charset to correspond with the new characters.
-                char_coords_aliases = _compile_charset(key_set[subcharset], starting_offset)
+                # Keymap change
+                char_coords_aliases = _compile_charset(key_set[keymap], _OSK_CHARSET_PX_OFFSET)
                 dev.wait_buttons_all_released()
                 continue
 
+            # TODO: Special key (BACKSPACE)
+            
+            # Normal key pressed
             else:
-                # Ensure max length has not been exceeded.
-                if len(char_string) == max_chars:
-                    pass
-                else:
-                    # Append the character to the string.
+                if len(char_string) <= max_chars:
                     char_string.append(cur_char[1])
 
                 dev.wait_buttons_all_released()
@@ -151,90 +148,86 @@ def _do_osk_input(subcharsets: list[str], key_set: dict[str, list], max_chars: i
         
         # UP_BTN HANDLER: MOVE THE CURSOR UP.
         elif dev.get_button_wait(dev.BTN_DIR_UP):
-            prev_len = len(key_set[subcharset][pos_y]) - 1
-            pos_y -= 1
+            prev_len = len(key_set[keymap][row]) - 1
+            row -= 1
             
-            if pos_y >= len(key_set[subcharset]):
-               pos_y = 0
-            elif pos_y < 0:
-               pos_y = len(key_set[subcharset]) - 1
+            if row >= len(key_set[keymap]):
+               row = 0
+            elif row < 0:
+               row = len(key_set[keymap]) - 1
             
             # Adjust cursor to the new row.
-            pos_x = _remap(pos_x, 0, prev_len, 0, len(key_set[subcharset][pos_y]) - 1)
+            col = _remap(col, 0, prev_len, 0, len(key_set[keymap][row]) - 1)
             
         # DN_BTN HANDLER: MOVE THE CURSOR DOWN.
         elif dev.get_button_wait(dev.BTN_DIR_DOWN):
-            prev_len = len(key_set[subcharset][pos_y]) - 1
-            pos_y += 1
+            prev_len = len(key_set[keymap][row]) - 1
+            row += 1
             
-            if pos_y >= len(key_set[subcharset]):
-               pos_y = 0
-            elif pos_y < 0:
-               pos_y = len(key_set[subcharset]) - 1
+            if row >= len(key_set[keymap]):
+               row = 0
+            elif row < 0:
+               row = len(key_set[keymap]) - 1
             
             # Adjust cursor to the new row
-            pos_x = _remap(pos_x, 0, prev_len, 0, len(key_set[subcharset][pos_y]) - 1)
+            col = _remap(col, 0, prev_len, 0, len(key_set[keymap][row]) - 1)
             
         # RT_BTN HANDLER: MOVE THE CURSOR RIGHT.
         elif dev.get_button_wait(dev.BTN_DIR_RIGHT):
-            pos_x += 1
+            col += 1
             
-            if pos_x >= len(key_set[subcharset][pos_y]):
-               pos_x = 0
-            elif pos_x < 0:
-               pos_x = len(key_set[subcharset][pos_y]) - 1
+            if col >= len(key_set[keymap][row]):
+               col = 0
+            elif col < 0:
+               col = len(key_set[keymap][row]) - 1
             
         # LT_BTN HANDLER: MOVE THE CURSOR LEFT.
         elif dev.get_button_wait(dev.BTN_DIR_LEFT):
-            pos_x -= 1
+            col -= 1
             
-            if pos_x >= len(key_set[subcharset][pos_y]):
-               pos_x = 0
-            elif pos_x < 0:
-               pos_x = len(key_set[subcharset][pos_y]) - 1
+            if col >= len(key_set[keymap][row]):
+               col = 0
+            elif col < 0:
+               col = len(key_set[keymap][row]) - 1
             
-        dev.DISPLAY.clear_buffers()
-        
-        # Draw the border.
+        # OSK frame
         # TODO: reshape the border for more efficient space usage.
+        dev.DISPLAY.clear_buffers()
         dev.DISPLAY.draw_rectangle(0, 0, 127, 63)
         dev.DISPLAY.draw_hline(0, 21, 127)
         
         # Draw keyboard on screen
         y = 0
-        try:
-            while True:
-                # Test access to this row.
-                _ = char_coords_aliases[(0, y)]
-                
-                # Now iterate over the x coordinate.
-                try:
-                    x = 0
-                    while True:
-                        # TODO: Draw osk with 5x7 font (rather than the 8x8)
-                        char = char_coords_aliases[(x, y)]
-                        dev.DISPLAY.draw_text8x8(char[2][0], char[2][1], char[0])
-                        x += 1
-                except KeyError:
-                    pass
-                
-                y += 1
-        except KeyError:
-            pass
+
+        for y in range(len(key_set[keymap][row])):
+            # Column geometry, unlike row geometry, is not guaranteed to be the same 
+            # as in the keymap before compilation. 
+            x = 0
+
+            while (x, y) in char_coords_aliases:
+                # TODO: Draw osk with 5x7 font (rather than the 8x8)
+                char = char_coords_aliases[(x, y)]
+                dev.DISPLAY.draw_text8x8(char[2][0], char[2][1], char[0])
+                x += 1
+            
+            y += 1
         
-        # Highlight the selected item.
-        cur_char = char_coords_aliases[(pos_x, pos_y)]
+        # Highlight selected character
+        cur_char = char_coords_aliases[(col, row)]
         char_rect = cur_char[2]
+
+        # TODO: Draw osk with 5x7 font (rather than the 8x8)
         dev.DISPLAY.fill_rectangle(char_rect[0], char_rect[1], char_rect[2], char_rect[3], 1)
         dev.DISPLAY.draw_text8x8(char_rect[0], char_rect[1], cur_char[0], 0)
         
-        # Print the written text at the top of the display.
+        # Drawing user entered text
         x_ind = 4
         start_len = 0 if len(char_string) < 15 else len(char_string) - 15
-        i = 0
         end_index = len(char_string) - start_len
+        i = 0
 
         for char in char_string[start_len:]:
+            # TODO: Convert to drawing 5x7
             if not hide_text:
                 dev.DISPLAY.draw_text8x8(x_ind, 2, char)
 
@@ -254,8 +247,15 @@ def _do_osk_input(subcharsets: list[str], key_set: dict[str, list], max_chars: i
         dev.DISPLAY.present()
 
 # Convert the character set into a usable form by the osk
-def _compile_charset(charset: list[list[str]], starting_offset: int) -> dict[tuple, tuple]:
-    charset_dict = {}
+def _compile_charset(charset: list[list[str]], starting_offset: int) \
+                     -> dict[tuple[int, int], tuple[str, str, tuple[int, int, int, int]]]:
+    """
+    Convert a jagged 2D input character set (with the given output x offset) into an output
+    dictionary with:
+      key: (x, y)
+      value: (key name, key value, (x, y, w, h))
+    """
+    gen_char_dict = {}
     y = 0
     oy = starting_offset
 
@@ -288,30 +288,31 @@ def _compile_charset(charset: list[list[str]], starting_offset: int) -> dict[tup
             enter_key = ("->", "RET")
             shift_key = ("AB", "SHFT")
             symbols   = ("&", "SYM")
+
+            # TODO: BACKSPACE ENTRY
             
             # Shift key entry.
-            charset_dict[(x, y)] = [shift_key[0], shift_key[1], (ox, oy, (len(shift_key[0]) * 8), 8)]
+            gen_char_dict[(x, y)] = [shift_key[0], shift_key[1], (ox, oy, (len(shift_key[0]) * 8), 8)]
             
             # Symbols key entry.
             x += 1
             ox += len(shift_key[0] * 8) + 8
-            charset_dict[(x, y)] = [symbols[0], symbols[1], (ox, oy, (len(symbols[0]) * 8), 8)]
+            gen_char_dict[(x, y)] = [symbols[0], symbols[1], (ox, oy, (len(symbols[0]) * 8), 8)]
             
             # Space bar entry.
             x += 1
             ox = starting_location
-            charset_dict[(x, y)] = [space_row[0], space_row[1], (ox, oy, (len(space_row[0]) * 8), 8)]
+            gen_char_dict[(x, y)] = [space_row[0], space_row[1], (ox, oy, (len(space_row[0]) * 8), 8)]
             
             # Enter key entry.
             x += 1
             ox = 110
-            charset_dict[(x, y)] = [enter_key[0], enter_key[1], (ox, oy, (len(enter_key[0]) * 8), 8)]
+            gen_char_dict[(x, y)] = [enter_key[0], enter_key[1], (ox, oy, (len(enter_key[0]) * 8), 8)]
         else:
             x = 0
             ox = starting_location
             for char in row:
-                # char entry in this row
-                charset_dict[(x, y)] = [char, char, (ox, oy, (len(char) * 8), 8)]
+                gen_char_dict[(x, y)] = [char, char, (ox, oy, (len(char) * 8), 8)]
                 
                 x += 1
                 ox += 8
@@ -320,7 +321,7 @@ def _compile_charset(charset: list[list[str]], starting_offset: int) -> dict[tup
         oy += 8
         
     # Compilation done      
-    return charset_dict
+    return gen_char_dict
 
 
 # Prompt the user for a yes/no answer.
@@ -329,6 +330,10 @@ def prompt_yn(label: str, prompt: list[str]) -> bool:
     # Check that the prompt is not longer than 4 lines.
     if len(prompt) > 4:
         raise ValueError("Prompt message box longer than 4 lines.")
+    
+    font_5x7 = xglcd_font.XglcdFont(_OSK_5x7_FONT_PATH, 5, 7)
+    font_h = font_5x7.height + 1
+    font_w = font_5x7.width + 1
     
     item_selected = False  # False means no, True means yes.
     
@@ -352,19 +357,16 @@ def prompt_yn(label: str, prompt: list[str]) -> bool:
             item_selected = not item_selected
             
         dev.DISPLAY.clear_buffers()
-
-        # TODO: no status bar
-        #run_status_bar()
         
         # Header
-        x_offset = (128 - (len(label) * 8)) // 2
-        dev.DISPLAY.draw_text8x8(x_offset, 8, label)
+        x_offset = (128 - (len(label) * font_w)) // 2
+        dev.DISPLAY.draw_text(x_offset, 0, label, font_5x7)
         
         # Message
-        y = 16
+        y = font_h
         for line in prompt:
-            dev.DISPLAY.draw_text8x8(0, y, line)
-            y += 8
+            dev.DISPLAY.draw_text(0, y, line, font_5x7)
+            y += font_h
 
         # Selected line is drawn with inverted colors.
         draw_color = 0 if item_selected else 1
@@ -374,11 +376,10 @@ def prompt_yn(label: str, prompt: list[str]) -> bool:
         elif not item_selected:
             dev.DISPLAY.fill_rectangle(0, 56, 127, 8, 1)
 
-        dev.DISPLAY.draw_text8x8(52, 48, "Yes", draw_color)
-        dev.DISPLAY.draw_text8x8(56, 56, "No", 1 - draw_color)
+        dev.DISPLAY.draw_text(52, 48, "Yes", font_5x7, draw_color)
+        dev.DISPLAY.draw_text(56, 56, "No", font_5x7, 1 - draw_color)
         
         dev.DISPLAY.present()
-
 
 # Prompt the user.
 # Prompt provided must be in list format.
@@ -386,6 +387,10 @@ def prompt_ok(label: str, prompt: list[str]) -> bool:
     # Check that the prompt is not longer than 4 lines.
     if len(prompt) > 4:
         raise ValueError("Prompt message box longer than 4 lines.")
+    
+    font_5x7 = xglcd_font.XglcdFont(_OSK_5x7_FONT_PATH, 5, 7)
+    font_h = font_5x7.height + 1
+    font_w = font_5x7.width + 1
     
     # Loop until an answer is provided.
     while True:
@@ -397,20 +402,19 @@ def prompt_ok(label: str, prompt: list[str]) -> bool:
             return True
             
         dev.DISPLAY.clear_buffers()
-        #run_status_bar()
         
         # Header
-        x_offset = (128 - (len(label) * 8)) // 2
-        dev.DISPLAY.draw_text8x8(x_offset, 8, label, 1)
+        x_offset = (128 - (len(label) * font_w)) // 2
+        dev.DISPLAY.draw_text(x_offset, 0, label, font_5x7)
         
         # Message
-        y = 16
+        y = font_h
         for line in prompt:
-            dev.DISPLAY.draw_text8x8(0, y, line)
-            y += 8
+            dev.DISPLAY.draw_text(0, y, line, font_5x7)
+            y += font_h
         
         dev.DISPLAY.fill_rectangle(0, 56, 127, 8, 1)
-        dev.DISPLAY.draw_text8x8(48, 56, "Okay", 0)
+        dev.DISPLAY.draw_text(48, 56, "Okay", font_5x7, 0)
         dev.DISPLAY.present()
 
 def _remap(x: int, in_min: int, in_max: int, out_min: int, out_max: int) -> int:

@@ -78,7 +78,6 @@ def run() -> bool:
         
         # Connection failed; loop back to the beginning and rescan.
         osk.prompt_ok(ap[0], ["Connection", "failed (code):", dev.NIC.decode_status()])
-    
 
 def do_select_menu(menu_name: str, ap_list: list[tuple[bytes, bytes, int, int, int, int]]) -> tuple[str, int, int] | None:
     """
