@@ -1,12 +1,10 @@
 from __nvs_perms import ReadOnlyNVS
+import logs
 import sys
 import os
 
 sys.path.append("/firm/bin")
 sys.path.append("/firm/app")
-
-from hal import peripherals
-import main
 
 # Hellooo clock firm! This firm runs the entire clock operating system
 # and supplies its many features. Here's what needs to be done:
@@ -29,11 +27,25 @@ import main
 #       - System Info -> (SN: <serial>/prod: <prod_id>/ver: <version>)
 #       - Licenses -> (Show licensing info for MicroPython, ucrypto, display driver)
 def firm_entry(nvs: ReadOnlyNVS):
-    # firmfs size:
-    f_bsize, _, f_blocks, f_bfree, _, _, _, _, _, _ = os.statvfs("/firm")
-    print(f"firmfs free/size: {f_bsize * f_bfree}/{f_bsize * f_blocks} B")
+    try:        
+        from hal import peripherals
+        import main
 
-    peripherals.init()
+        # firmfs size:
+        f_bsize, _, f_blocks, f_bfree, _, _, _, _, _, _ = os.statvfs("/firm")
+        print(f"firmfs free/size: {f_bsize * f_bfree}/{f_bsize * f_blocks} B")
 
-    # TODO: TEST THE UPDATED OSK.
-    main.main()
+        with open("/firm/version") as f:
+            logs.print_info("app", f"got version {f.read().strip()}")
+
+        peripherals.init()
+
+        # TODO: TEST THE UPDATED OSK.
+        main.main()
+    
+    except BaseException as ie:
+        sys.print_exception(ie)
+
+        while True:
+            pass
+

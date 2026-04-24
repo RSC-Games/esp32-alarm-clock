@@ -18,6 +18,7 @@
 import micropython
 micropython.kbd_intr(-1)
 
+from bootrom import R2B_RECOVERY_IMG, R2B_UART
 from ucrypto.ufastrsa.rsa import RSA
 from __nvs_perms import ReadOnlyNVS
 from typing import NoReturn, Any, Callable
@@ -40,10 +41,6 @@ _FORCE_NVS_LOCKOUT = micropython.const(False)
 _FORCE_DISABLE_SD_BOOT = micropython.const(False)
 
 ################################## END CONFIGURATION ####################################
-
-# REBOOT2BOOTLOADER:
-_R2B_RECOVERY_IMG = micropython.const(0)
-_R2B_UART = micropython.const(1)
 
 # USB/UART recovery bootloader (data link layer)
 _UART_RCM_CONN_RETRIES = micropython.const(10)
@@ -810,10 +807,10 @@ def boot_main() -> None:
         from machine import RTC
         cmd = RTC().memory()[0]
 
-        if cmd == _R2B_RECOVERY_IMG:
+        if cmd == R2B_RECOVERY_IMG:
             logs.print_info("boot", "reboot2bootloader: requested recovery.img boot")
             reboot2recovery = True
-        elif cmd == _R2B_UART:
+        elif cmd == R2B_UART:
             logs.print_info("boot", "reboot2bootloader: requested uart boot")
             reboot2uart = True
 
@@ -866,12 +863,7 @@ def boot_main() -> None:
         sys.print_exception(ie)
 
     finally:
-        def reboot_to_recovery():
-            from machine import deepsleep, RTC
-            RTC().memory(_R2B_RECOVERY_IMG)
-            logs.print_warning("boot", "rebooting to recovery.img")
-
-            deepsleep(1)
+        from bootrom import reboot_to_recovery
 
         # Application error (should never return)
         _fatal_error_led(pubkey, boot_nvs, 5, 1, reboot=reboot_to_recovery)

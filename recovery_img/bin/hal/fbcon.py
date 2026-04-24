@@ -61,7 +61,7 @@ class FBConsole:
         for i in range(min(len(self.lines), _CONSOLE_MAX_LINES)):
             peripherals.DISPLAY.draw_text(2, i * _LINE_HEIGHT_PX + line_offset, self.lines[i], self.font)
 
-        peripherals.DISPLAY.draw_line(127, 63, 127, _LCD_VERTICAL * (len(self.lines) / self.total_lines))
+        peripherals.DISPLAY.draw_line(127, 63, 127, _LCD_VERTICAL * (len(self.lines) // self.total_lines))
         peripherals.DISPLAY.present()
 
 
