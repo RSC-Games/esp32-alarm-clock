@@ -20,7 +20,7 @@ def main(payload: str):
     output.print_tool("attempting to open device...")
 
     try:
-        rcm = uart_rcm.open_device("COM3")
+        rcm = uart_rcm.open_device("COM12")
 
         t_start_ms = time.monotonic_ns() / 1_000_000
         uart_rcm.boot_payload(rcm, payload)

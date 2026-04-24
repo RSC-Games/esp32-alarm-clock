@@ -1,13 +1,13 @@
 from internet_recovery import wifi_menu
+from micropython import const, mem_info
 from esp import osdebug, LOG_INFO
 from hal import peripherals, osk
-from micropython import const
 import recovery_utils
 import requests
 import logs
 import sys
 
-_CHUNK_SIZE = const(32768)
+_CHUNK_SIZE = const(24*1024)
 _RELEASE_URL = const("https://api.github.com/repos/rsc-games/esp32-alarm-clock/releases/latest")
 _HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36'}
 
@@ -102,6 +102,7 @@ def main():
 
     try:
         # TODO: Move this code into an updater library
+        peripherals.FBCON.set_hidden(False)
         peripherals.FBCON.write_line("i: locating firmware files")
         firm_url, firm_sig_url = get_artifact_urls(_RELEASE_URL)
         
@@ -123,3 +124,8 @@ def main():
         logs.print_error("recovery", "unable to download firm")
         sys.print_exception(ie)
         sys.exit(-1)
+
+    except MemoryError:
+        logs.print_error("recovery", "oom event")
+        mem_info(1)
+        sys.exit(-2)

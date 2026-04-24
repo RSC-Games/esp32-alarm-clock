@@ -162,7 +162,6 @@ def _do_osk_input(subcharsets: list[str], key_set: dict[str, list], max_chars: i
             
             # Adjust cursor to the new row.
             pos_x = _remap(pos_x, 0, prev_len, 0, len(key_set[subcharset][pos_y]) - 1)
-            time.sleep(0.25)
             
         # DN_BTN HANDLER: MOVE THE CURSOR DOWN.
         elif peripherals.get_button_wait(peripherals.BTN_DIR_DOWN):
@@ -176,7 +175,6 @@ def _do_osk_input(subcharsets: list[str], key_set: dict[str, list], max_chars: i
             
             # Adjust cursor to the new row
             pos_x = _remap(pos_x, 0, prev_len, 0, len(key_set[subcharset][pos_y]) - 1)
-            time.sleep(0.25)
             
         # RT_BTN HANDLER: MOVE THE CURSOR RIGHT.
         elif peripherals.get_button_wait(peripherals.BTN_DIR_RIGHT):
@@ -186,8 +184,6 @@ def _do_osk_input(subcharsets: list[str], key_set: dict[str, list], max_chars: i
                pos_x = 0
             elif pos_x < 0:
                pos_x = len(key_set[subcharset][pos_y]) - 1
-
-            time.sleep(0.25)
             
         # LT_BTN HANDLER: MOVE THE CURSOR LEFT.
         elif peripherals.get_button_wait(peripherals.BTN_DIR_LEFT):
@@ -198,14 +194,12 @@ def _do_osk_input(subcharsets: list[str], key_set: dict[str, list], max_chars: i
             elif pos_x < 0:
                pos_x = len(key_set[subcharset][pos_y]) - 1
             
-            time.sleep(0.25)
-            
         peripherals.DISPLAY.clear_buffers()
         
         # Draw the border.
         # TODO: reshape the border for more efficient space usage.
-        peripherals.DISPLAY.draw_rectangle(0, 0, 128, 64)
-        peripherals.DISPLAY.draw_hline(0, 21, 128)
+        peripherals.DISPLAY.draw_rectangle(0, 0, 127, 63)
+        peripherals.DISPLAY.draw_hline(0, 21, 127)
         
         # Draw keyboard on screen
         y = 0
@@ -220,7 +214,7 @@ def _do_osk_input(subcharsets: list[str], key_set: dict[str, list], max_chars: i
                     while True:
                         # TODO: Draw osk with 5x7 font (rather than the 8x8)
                         char = char_coords_aliases[(x, y)]
-                        peripherals.DISPLAY.draw_text8x8(char[0], char[2][0], char[2][1])
+                        peripherals.DISPLAY.draw_text8x8(char[2][0], char[2][1], char[0])
                         x += 1
                 except KeyError:
                     pass
@@ -233,7 +227,7 @@ def _do_osk_input(subcharsets: list[str], key_set: dict[str, list], max_chars: i
         cur_char = char_coords_aliases[(pos_x, pos_y)]
         char_rect = cur_char[2]
         peripherals.DISPLAY.fill_rectangle(char_rect[0], char_rect[1], char_rect[2], char_rect[3], 1)
-        peripherals.DISPLAY.draw_text8x8(cur_char[0], char_rect[0], char_rect[1], 0)
+        peripherals.DISPLAY.draw_text8x8(char_rect[0], char_rect[1], cur_char[0], 0)
         
         # Print the written text at the top of the display.
         x_ind = 4
@@ -243,13 +237,13 @@ def _do_osk_input(subcharsets: list[str], key_set: dict[str, list], max_chars: i
 
         for char in char_string[start_len:]:
             if not hide_text:
-                peripherals.DISPLAY.draw_text8x8(char, x_ind, 2)
+                peripherals.DISPLAY.draw_text8x8(x_ind, 2, char)
 
             elif i == end_index - 1:
-                peripherals.DISPLAY.draw_text8x8(char, x_ind, 2)
+                peripherals.DISPLAY.draw_text8x8(x_ind, 2, char)
 
             else:
-                peripherals.DISPLAY.draw_text8x8("*", x_ind, 2)                
+                peripherals.DISPLAY.draw_text8x8(x_ind, 2, "*")                
             
             x_ind += 8
             i += 1
@@ -257,7 +251,7 @@ def _do_osk_input(subcharsets: list[str], key_set: dict[str, list], max_chars: i
         # User string length
         # TODO: Show this with the 3x5 smaller font
         length_str = f"{len(char_string)}/{max_chars}"
-        peripherals.DISPLAY.draw_text8x8(length_str, 126 - (len(length_str) * 8), 13)
+        peripherals.DISPLAY.draw_text8x8(126 - (len(length_str) * 8), 13, length_str)
         peripherals.DISPLAY.present()
 
 # Convert the character set into a usable form by the osk
@@ -284,7 +278,7 @@ def _compile_charset(charset: list[list[str]], starting_offset: int) -> dict[tup
                 print_str += char
             
         # X axis left align (to center keyboard)
-        starting_location = (128 - (len(print_str) * 8)) // 2
+        starting_location = (_OSK_WIDTH - (len(print_str) * 8)) // 2
         
         if space_row_flag:
             x = 0
@@ -365,24 +359,24 @@ def prompt_yn(label: str, prompt: list[str]) -> bool:
         
         # Header
         x_offset = (128 - (len(label) * 8)) // 2
-        peripherals.DISPLAY.draw_text8x8(label, x_offset, 8)
+        peripherals.DISPLAY.draw_text8x8(x_offset, 8, label)
         
         # Message
         y = 16
         for line in prompt:
-            peripherals.DISPLAY.draw_text8x8(line, 0, y, 1)
+            peripherals.DISPLAY.draw_text8x8(0, y, line)
             y += 8
 
         # Selected line is drawn with inverted colors.
         draw_color = 0 if item_selected else 1
         
         if item_selected:
-            peripherals.DISPLAY.fill_rectangle(0, 48, 128, 8, 1)
+            peripherals.DISPLAY.fill_rectangle(0, 48, 127, 8, 1)
         elif not item_selected:
-            peripherals.DISPLAY.fill_rectangle(0, 56, 128, 8, 1)
+            peripherals.DISPLAY.fill_rectangle(0, 56, 127, 8, 1)
 
-        peripherals.DISPLAY.draw_text8x8("Yes", 52, 48, draw_color)
-        peripherals.DISPLAY.draw_text8x8("No", 56, 56, 1 - draw_color)
+        peripherals.DISPLAY.draw_text8x8(52, 48, "Yes", draw_color)
+        peripherals.DISPLAY.draw_text8x8(56, 56, "No", 1 - draw_color)
         
         peripherals.DISPLAY.present()
 
@@ -408,16 +402,16 @@ def prompt_ok(label: str, prompt: list[str]) -> bool:
         
         # Header
         x_offset = (128 - (len(label) * 8)) // 2
-        peripherals.DISPLAY.draw_text8x8(label, x_offset, 8, 1)
+        peripherals.DISPLAY.draw_text8x8(x_offset, 8, label, 1)
         
         # Message
         y = 16
         for line in prompt:
-            peripherals.DISPLAY.draw_text8x8(line, 0, y)
+            peripherals.DISPLAY.draw_text8x8(0, y, line)
             y += 8
         
-        peripherals.DISPLAY.fill_rectangle(0, 56, 128, 8, 1)
-        peripherals.DISPLAY.draw_text8x8("Okay", 48, 56, 0)
+        peripherals.DISPLAY.fill_rectangle(0, 56, 127, 8, 1)
+        peripherals.DISPLAY.draw_text8x8(48, 56, "Okay", 0)
         peripherals.DISPLAY.present()
 
 def _remap(x: int, in_min: int, in_max: int, out_min: int, out_max: int) -> int:

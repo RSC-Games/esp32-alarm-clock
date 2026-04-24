@@ -3,7 +3,7 @@ from machine import Pin, ADC, I2C
 from micropython import const
 from time import sleep_ms
 
-_DEBOUNCE_INT_MS = const(90)
+_DEBOUNCE_INT_MS = const(150)
 
 # HW PIN DEFS
 _PIN_DIR_UP = const(27)

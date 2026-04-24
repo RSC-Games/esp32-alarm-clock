@@ -28,6 +28,11 @@ def run() -> bool:
         if ap[2] != dev.NIC.wlan.SEC_OPEN:
             osk.prompt_ok(ap[0], ["Please enter", "wifi password", "to continue"])
             psk = osk.prompt_text(osk.LAYOUT_KEYBOARD, 50, hide_text=True)
+
+            # Exit triggers a rescan
+            if psk == "":
+                continue
+
         else:
             psk = ""
 
@@ -37,7 +42,6 @@ def run() -> bool:
 
         if dev.NIC.assoc_new((ap[0], ap[2], psk)):
             osk.prompt_ok(ap[0], ["Connected", "successfully!"])
-            dev.FBCON.set_hidden(False)
             return True
         
         # Connection failed; loop back to the beginning and rescan.
@@ -55,12 +59,27 @@ def do_select_menu(menu_name: str, ap_list: list[tuple[bytes, bytes, int, int, i
     index = 0
     offset = 0
 
+    legal_aps = []
+    
+    # Eliminate entries that may cause a crash
+    for ap in ap_list:
+        try:
+            ap[0].decode()
+            legal_aps.append(ap)
+        except UnicodeDecodeError:
+            print(f"illegal ap found {ap}")
+            pass
+
+    ap_list.clear()
+    ap_list.extend(legal_aps)
+    del legal_aps
+
     while True:          
         # Desired network (may crash)
         if dev.get_button_wait(dev.BTN_CONFIRM):
-            ap = ap_list[offset]
+            ap = ap_list[index]
             dev.wait_buttons_all_released()
-            return ap[0].decode(errors="replace"), ap[3], ap[4]
+            return ap[0].decode(), ap[3], ap[4]
             
         # Triggers rescan
         elif dev.get_button_wait(dev.BTN_BACK):
@@ -69,13 +88,13 @@ def do_select_menu(menu_name: str, ap_list: list[tuple[bytes, bytes, int, int, i
 
         elif dev.get_button_wait(dev.BTN_DIR_UP):
             index -= 1
-            if index % 6 == 5 and index > 0:
-                offset -= 6
+            if index % 7 == 6 and index > 0:
+                offset -= 7
 
         elif dev.get_button_wait(dev.BTN_DIR_DOWN):
             index += 1
-            if index % 6 == 0 and index > 0:
-                offset += 6
+            if index % 7 == 0 and index > 0:
+                offset += 7
 
         # Wrap index.
         if index == len(ap_list):
@@ -83,25 +102,27 @@ def do_select_menu(menu_name: str, ap_list: list[tuple[bytes, bytes, int, int, i
             offset = 0
         elif index == -1:
             index = len(ap_list) - 1
-            offset = (index // 6) * 6
+            offset = int((index // 7) * 7)
 
         # Print the menu items.
         start_loc = 8
         dev.DISPLAY.clear_buffers()
 
-        for i in range(0, min(len(ap_list) - offset, 6)):
-            ap_name = ap_list[offset + i][0].decode(errors="replace")
+        for i in range(0, min(len(ap_list) - offset, 7)):
+            ap_entry = ap_list[offset + i]
+            ap_name = ap_entry[0].decode() if ap_entry[5] == 0 and not ap_entry[0] == b"" \
+                        else "Hidden network"
 
             if offset + i == index:
-                dev.DISPLAY.fill_rectangle(0, start_loc, 128, 8)
-                dev.DISPLAY.draw_text8x8(ap_name, 0, start_loc, 0)
+                dev.DISPLAY.fill_rectangle(0, start_loc, 127, 8)
+                dev.DISPLAY.draw_text8x8(0, start_loc, ap_name, 0)
 
             else:
-                dev.DISPLAY.draw_text8x8(ap_name, 0, start_loc)
+                dev.DISPLAY.draw_text8x8(0, start_loc, ap_name)
 
             start_loc += 8
 
         # Menu printed, print header.
         width = (128 - (len(menu_name) * 8)) // 2
-        dev.DISPLAY.draw_text8x8(menu_name, width, 0)
+        dev.DISPLAY.draw_text8x8(width, 0, menu_name)
         dev.DISPLAY.present()

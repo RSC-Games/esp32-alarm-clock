@@ -7,11 +7,13 @@ import logs
 import time
 
 _STATUS_DECODE = {
+    network.STAT_GOT_IP: "got ip",
     network.STAT_ASSOC_FAIL: "assoc fail",
     network.STAT_BEACON_TIMEOUT: "beacon timeout",
     network.STAT_CONNECT_FAIL: "conn fail",
     network.STAT_HANDSHAKE_TIMEOUT: "4way timeout",
     network.STAT_NO_AP_FOUND: "not found",
+    network.STAT_NO_AP_FOUND_W_COMPATIBLE_SECURITY: "wrong security",
     network.STAT_WRONG_PASSWORD: "wrong password"
 }
 
@@ -217,7 +219,7 @@ class WiFiManager:
             time.sleep_ms(100)
 
         network_state = self.wlan.status()
-        logs.print_info("net", f"nic state {network_state}")
+        logs.print_info("net", f"nic state {self.decode_status()}")
 
         return network_state == network.STAT_GOT_IP
     

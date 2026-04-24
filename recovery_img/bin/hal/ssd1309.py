@@ -132,7 +132,7 @@ class Display(object):
             return
         self.monoFB.hline(x, y, w, int(invert ^ 1))
 
-    def draw_letter(self, x, y, letter: str, font, invert=False, rotate: int|bool=False):
+    def draw_letter(self, x, y, letter: str, font, c: int=1):
         """Draw a letter.
 
         Args:
@@ -143,17 +143,11 @@ class Display(object):
             invert (bool): Invert color
             rotate (int): Rotation of letter
         """
-        fbuf, w, h = font.get_letter(letter, invert=invert, rotate=rotate)
+        fbuf, w, h = font.get_letter(letter, invert=c == 0)
 
         # Check for errors
         if fbuf is None:
             return w, h
-        
-        # Offset y for 270 degrees and x for 180 degrees
-        if rotate == 180:
-            x -= w
-        elif rotate == 270:
-            y -= h
 
         self.monoFB.blit(fbuf, x, y)
         return w, h
@@ -224,8 +218,7 @@ class Display(object):
         """
         self.monoFB.rect(x, y, w, h, int(invert ^ 1))
 
-    def draw_text(self, x: int, y: int, text: str, font, invert=False,
-                  rotate=0, spacing=1):
+    def draw_text(self, x: int, y: int, text: str, font, c: int=1, spacing=1):
         """Draw text.
 
         Args:
@@ -239,45 +232,20 @@ class Display(object):
         """
         for letter in text:
             # Get letter array and letter dimensions
-            w, h = self.draw_letter(x, y, letter, font, invert, rotate)
+            w, h = self.draw_letter(x, y, letter, font, c)
 
             # Stop on error
             if w == 0 or h == 0:
                 return
             
-            if rotate == 0:
-                # Fill in spacing
-                if spacing:
-                    self.fill_rectangle(x + w, y, spacing, h, invert ^ 1)
-                    
-                # Position x for next letter
-                x += (w + spacing)
+            # Fill in spacing
+            if spacing:
+                self.fill_rectangle(x + w, y, spacing, h, c - 1)
+                
+            # Position x for next letter
+            x += (w + spacing)
 
-            elif rotate == 90:
-                # Fill in spacing
-                if spacing:
-                    self.fill_rectangle(x, y + h, w, spacing, invert ^ 1)
-                # Position y for next letter
-                y += (h + spacing)
-            elif rotate == 180:
-                # Fill in spacing
-                if spacing:
-                    self.fill_rectangle(x - w - spacing, y, spacing,
-                                        h, invert ^ 1)
-                # Position x for next letter
-                x -= (w + spacing)
-            elif rotate == 270:
-                # Fill in spacing
-                if spacing:
-                    self.fill_rectangle(x, y - h - spacing, w, spacing,
-                                        invert ^ 1)
-                # Position y for next letter
-                y -= (h + spacing)
-            else:
-                print("Invalid rotation.")
-                return
-
-    def draw_text8x8(self, x, y, text, color=1):
+    def draw_text8x8(self, x: int, y: int, text: str, color=1):
         """Draw text using built-in MicroPython 8x8 bit font.
 
         Args:
@@ -285,9 +253,8 @@ class Display(object):
             y (int): Starting Y position.
             text (string): Text to draw.
         """
-        # Confirm coordinates in boundary
-        if self.is_off_grid(x, y, x + 8, y + 8):
-            return
+        # Confirm coordinates in boundary (skip bounds check)
+        self.is_off_grid(x, y, x + 8, y + 8)
         self.monoFB.text(text, x, y, color)
 
     def draw_vline(self, x, y, h, invert=False):
@@ -304,7 +271,7 @@ class Display(object):
             return
         self.monoFB.vline(x, y, h, int(invert ^ 1))
 
-    def fill_rectangle(self, x, y, w, h, invert: int|bool=False):
+    def fill_rectangle(self, x, y, w, h, c: int=1):
         """Draw a filled rectangle.
 
         Args:
@@ -316,7 +283,7 @@ class Display(object):
         """
         if self.is_off_grid(x, y, x + w - 1, y + h - 1):
             return
-        self.monoFB.fill_rect(x, y, w, h, int(invert ^ 1))
+        self.monoFB.fill_rect(x, y, w, h, c)
 
     def is_off_grid(self, xmin, ymin, xmax, ymax):
         """Check if coordinates extend past display boundaries.
@@ -335,11 +302,11 @@ class Display(object):
         if ymin < 0:
             print(f'warn-y: {ymin} < 0')
             return True
-        if xmax >= self.width:
-            print(f'warn-x: {xmax} > {self.width-1}')
+        if xmax > self.width:
+            print(f'warn-x: {xmax} > {self.width}')
             return True
-        if ymax >= self.height:
-            print(f'warn-y: {ymax} > {self.height-1}')
+        if ymax > self.height:
+            print(f'warn-y: {ymax} > {self.height}')
             return True
         return False
 
