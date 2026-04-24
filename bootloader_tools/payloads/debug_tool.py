@@ -1,5 +1,7 @@
 from esp32 import Partition
+from machine import DAC
 import micropython
+import time
 import vfs
 import sys
 import os
@@ -13,6 +15,25 @@ gc.collect()
 
 #print(f"initrd free/size: {f_bsize * f_bfree}/{f_bsize * f_blocks} B")
 
+def dac_toggle(dac: DAC, level: int, interval: int, cnt: int):
+    for i in range(cnt):
+        dac.write(level)
+        time.sleep_us(interval)
+        dac.write(0)
+        time.sleep_us(interval)
+
+dac = DAC(25)
+
+def test_alarm_noise(level: int, interval: int, duration: int, cycles: int):
+
+    for i in range(cycles):
+        dac_toggle(dac, level, interval, duration//interval)
+        time.sleep_ms(100)
+        dac_toggle(dac, level, interval, duration//interval)
+        time.sleep_ms(725)
+
+# ALARM NOISE: test_alarm_noise(255, 333, 50000, 5)
+
 def firm_entry(pubkey, nvs):
     print("have code exec post firm_entry")
 
@@ -23,10 +44,10 @@ def firm_entry(pubkey, nvs):
 
     print(f"dir {dir()}")
 
-    print(f"globals {globals()}")
-    print(f"locals {locals()}")
-    print(f"path {sys.path}")
-    print(f"modules {sys.modules}")
+    print(f"globals {globals()}\n")
+    print(f"locals {locals()}\n")
+    print(f"path {sys.path}\n")
+    print(f"modules {sys.modules}\n")
     print()
 
     for name, module in sys.modules.items():

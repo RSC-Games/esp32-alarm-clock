@@ -1,4 +1,5 @@
 from __nvs_perms import ReadOnlyNVS
+from vfs import mount, VfsLfs2
 import machine
 import time
 import logs
@@ -94,9 +95,44 @@ def _fixup_bad_update_secure() -> bool:
     return False
 
 
-# Insecure variant (TODO: later)
+# Clean up/fix the main firmware package after a failed update.
+# Insecure variant: Skip signature checks and installation.
+# Update failure will likely come from a power outage while installing
+# either the update package or update signature.
+#
+# Post-update firmware switchout occurs in the following order:
+#   <firmware>.img -> <firmware>.img.old
+#   <firmware>-update.img -> <firmware>.img
+#
+# There are a couple modes of failure that will require different fixes:
+#   Case 1: Firm present: probably corrupt
+#   Case 2: Missing firm: Installation incomplete
+# 
+# If any of these attempted fixes cannot repair the damage, internet
+# recovery is required.
+#
 def _fixup_bad_update() -> bool:
-    logs.print_warning("recovery", "stg1 fail: mode not supported")
+    # Files from a partially finished upgrade
+    old_firm_present = recovery_utils.file_exists("/clock_firm.img.old")
+
+    # Actively installed firm/sig (Corrupt?)
+    active_firm_present = recovery_utils.file_exists("/clock_firm.img")
+
+    # Newly downloaded update files
+    new_firm_present = recovery_utils.file_exists("/clock_firm.img.new")
+
+    # Case 1/2 code identical -> FIX: firm corrupt; install new copy
+    if new_firm_present:
+        logs.print_info("recovery", "trying local update install")
+        recovery_utils.install_insecure_firmware_local()
+        return True
+    
+    elif old_firm_present:
+        logs.print_info("recovery", "rolling back firm")
+        recovery_utils.install_insecure_firmware_local(".old")
+        return True
+
+    logs.print_warning("recovery", "stg1 fail: no intact firms")
     return False
 
 
@@ -118,8 +154,8 @@ def app_main(nvs: ReadOnlyNVS):
     logs.print_warning("recovery", "booted recovery firm")
 
     # firmfs size:
-    f_bsize, _, f_blocks, f_bfree, _, _, _, _, _, _ = os.statvfs("/firm")
-    print(f"firmfs free/size: {f_bsize * f_bfree}/{f_bsize * f_blocks} B")
+    #f_bsize, _, f_blocks, f_bfree, _, _, _, _, _, _ = os.statvfs("/firm")
+    #print(f"firmfs free/size: {f_bsize * f_bfree}/{f_bsize * f_blocks} B")
 
     # prod id check (to avoid cross-installing firmwares)
     prod_id = nvs.get_str("prod_id")
@@ -128,7 +164,13 @@ def app_main(nvs: ReadOnlyNVS):
         logs.print_error("recovery", f"bad prod_id: {prod_id}")
         raise OSError("EINVAL")
     
-    # TODO: Abort if we're booting from SD.
+    # Only two disks should be mounted at this point, and root should be NOR.
+    # SD BOOT IS NOT SUPPORTED!
+    root = [fs for fs, mount in mount() if mount == "/"][0]
+
+    if type(root) != VfsLfs2:
+        logs.print_error("recovery", "sd boot not supported")
+        raise OSError("EINVAL")
 
     # Perform stage one recovery. Secure boot recovery is significantly more difficult
     # than recovering with signature checks disabled.
@@ -169,12 +211,11 @@ def app_main(nvs: ReadOnlyNVS):
         if exit.value == 0:  # type: ignore
             logs.print_info("recovery", "installed internet firm")
             osk.prompt_ok("Recovery", ["Recovery", "successful!", "Reboot?"])
-
             machine.reset()
     
         FBCON.set_hidden(False)
-        FBCON.write_line("w: recovery failed")
+        FBCON.write_line("w: recovery failed; rebooting")
         logs.print_error("recovery", "stg2 fail. UART boot req'd")
-        time.sleep(10)
+        time.sleep(5)
 
     machine.reset()

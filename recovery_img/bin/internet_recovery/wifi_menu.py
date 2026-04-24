@@ -11,7 +11,7 @@ def run() -> bool:
 
     # Get consent to add a new network entry.
     if not osk.prompt_yn("NO NETWORK", ["Set up a new", "connection?"]):
-        osk.prompt_ok("Network", ["Declined.", "Reboot?"])
+        osk.prompt_ok("Network", ["Wifi is req'd", "to repair firm.", "Reboot?"])
         return False
 
     while True:
@@ -19,7 +19,7 @@ def run() -> bool:
 
         while ap is None:
             dev.DISPLAY.clear_buffers()
-            dev.DISPLAY.draw_text8x8(0, 0, "wifi scan...")
+            dev.DISPLAY.draw_text8x8(0, 0, "scanning...")
             dev.DISPLAY.present()
 
             scan_results = dev.NIC.rescan()
@@ -67,7 +67,6 @@ def do_select_menu(menu_name: str, ap_list: list[tuple[bytes, bytes, int, int, i
             ap[0].decode()
             legal_aps.append(ap)
         except UnicodeDecodeError:
-            print(f"illegal ap found {ap}")
             pass
 
     ap_list.clear()

@@ -26,7 +26,6 @@ _OLED_I2C_FREQ = const(1_000_000)
 _PIN_OLED_SCL = const(18)
 _PIN_OLED_SDA = const(19)
 
-# TODO: Determine if using D25/26 improves speaker driving
 _PIN_SPKR_OUT = const(25)
 
 # PIN DRIVES
