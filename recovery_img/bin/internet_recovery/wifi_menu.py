@@ -13,6 +13,24 @@ def run() -> bool:
     if not osk.prompt_yn("NO NETWORK", ["Set up a new", "connection?"]):
         osk.prompt_ok("Network", ["Wifi is req'd", "to repair firm.", "Reboot?"])
         return False
+    
+    # Network entry slots may be full
+    if not dev.NIC.has_free_slots():
+        if not osk.prompt_yn("Network", ["No remaining", "network slots.", "Delete one?"]):
+            return False
+        
+        slots = [(dev.NIC.net_cfg.get_slot(slot_id)[0].encode(), b"", 0, 0, 0, 0) for slot_id in range(8)]
+        
+        # Remove entry.
+        del_ap = do_select_menu("Remove Network", slots)
+
+        if del_ap is None:
+            osk.prompt_ok("Network", ["Remove declined.", "Reboot?"])
+            return False
+        
+        # Remove entry.
+        osk.prompt_ok(del_ap[0], ["Forget network?"])
+        dev.NIC.forget_network(del_ap[0])
 
     while True:
         ap = None
@@ -23,6 +41,20 @@ def run() -> bool:
             dev.DISPLAY.present()
 
             scan_results = dev.NIC.rescan()
+
+            legal_aps = []
+    
+            # Eliminate entries that may cause a crash
+            for ap in scan_results:
+                try:
+                    ap[0].decode()
+                    legal_aps.append(ap)
+                except UnicodeDecodeError:
+                    pass
+
+            scan_results.clear()
+            scan_results.extend(legal_aps)
+
             ap = do_select_menu("Scan Results", scan_results)
 
         if ap[2] != dev.NIC.wlan.SEC_OPEN:
@@ -58,20 +90,6 @@ def do_select_menu(menu_name: str, ap_list: list[tuple[bytes, bytes, int, int, i
     # Current menu position.
     index = 0
     offset = 0
-
-    legal_aps = []
-    
-    # Eliminate entries that may cause a crash
-    for ap in ap_list:
-        try:
-            ap[0].decode()
-            legal_aps.append(ap)
-        except UnicodeDecodeError:
-            pass
-
-    ap_list.clear()
-    ap_list.extend(legal_aps)
-    del legal_aps
 
     while True:          
         # Desired network (may crash)

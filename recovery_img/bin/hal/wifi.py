@@ -73,6 +73,12 @@ class NetworkConfig(ReadOnlyNVS):
         slots |= 1 << slot_id
         self.set_i32("slots", slots)
 
+    def used_slots(self) -> list[int]:
+        """
+        Get a list of the currently used slots (for iterating through)
+        """
+        return [i for i in range(8) if self.slot_used(i)]
+
     def free_slot(self, slot_id: int) -> None:
         """
         Mark a slot as freed. The changes are instantly committed.
@@ -152,7 +158,18 @@ class NetworkConfig(ReadOnlyNVS):
         psk = self.get_str(f"net{slot}_psk")
 
         return ssid, auth, psk
+    
+    def get_slot_by_ssid(self, ssid: str) -> int | None:
+        """
+        Get the slot id of the provided ssid, if it exists.
+        """
+        for slot in self.used_slots():
+            s_ssid, _, _ = self.get_slot(slot)
 
+            if s_ssid == ssid:
+                return slot
+
+        return None
 
 class WiFiManager:
     def __init__(self):
@@ -224,7 +241,16 @@ class WiFiManager:
         return network_state == network.STAT_GOT_IP
     
     def get_ip(self) -> str:
+        """
+        Get the device's current local IP address.
+        """
         return self.wlan.ipconfig("addr4")[0]
+    
+    def has_free_slots(self) -> bool:
+        """
+        Determine if the NIC has still remaining registration slots.
+        """
+        return self.net_cfg.get_free_slot() is not None
     
     def assoc_new(self, network: tuple[str, int, str]) -> bool:
         """
@@ -242,6 +268,17 @@ class WiFiManager:
         
         self.net_cfg.set_slot(new_slot, *network)
         return True
+    
+    def forget_network(self, network: str) -> None:
+        """
+        Delete an associated network (provided its SSID)
+        """
+        slot = self.net_cfg.get_slot_by_ssid(network)
+
+        if slot is None:
+            raise OSError("ENOENT")
+
+        self.net_cfg.free_slot(slot)
     
     def rescan(self) -> list[tuple[bytes, bytes, int, int, int, int]]:
         """

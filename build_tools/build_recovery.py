@@ -10,7 +10,7 @@ import os
 MPY_CROSS_PATH = f"{pathlib.Path(__file__).parent}/mpy-cross.exe"
 MPY_CROSS_FLAGS = "-O2"
 RECOVERY_IMAGER_PATH = f"{pathlib.Path(__file__).parent}/payloads/factory_imager_base.py"
-MAX_RECOVERY_IMG_SIZE = int(27.5*1024)  # 3 kB FREE IN IMAGE (6 sectors)
+MAX_RECOVERY_IMG_SIZE = int(28*1024)  # 2 kB FREE IN IMAGE (4 sectors)
 
 def _create_build_dir(in_tree: str, build_tree: str):
     if os.path.exists(build_tree):
