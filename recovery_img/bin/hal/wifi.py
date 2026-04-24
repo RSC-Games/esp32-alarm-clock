@@ -1,11 +1,19 @@
 
-from hal.drivers.fbcon import GLOBAL_FBCON
+from hal.fbcon import GLOBAL_FBCON
 from __nvs_perms import ReadOnlyNVS
 from network import WLAN
 import network
 import logs
 import time
 
+_STATUS_DECODE = {
+    network.STAT_ASSOC_FAIL: "assoc fail",
+    network.STAT_BEACON_TIMEOUT: "beacon timeout",
+    network.STAT_CONNECT_FAIL: "conn fail",
+    network.STAT_HANDSHAKE_TIMEOUT: "4way timeout",
+    network.STAT_NO_AP_FOUND: "not found",
+    network.STAT_WRONG_PASSWORD: "wrong password"
+}
 
 # Network configuration NVS:
 # Stores all of the currently associated network devices.
@@ -26,7 +34,7 @@ import time
 class NetworkConfig(ReadOnlyNVS):
     def __init__(self) -> None:
         super().__init__("config-wifi")
-        logs.print_warning("net", "WiFi configuration info is not encrypted!")
+        logs.print_warning("net", "net cfg not encrypted")
 
         try:
             self.get_i32("slots")
@@ -57,7 +65,7 @@ class NetworkConfig(ReadOnlyNVS):
         been so marked. Commit is deferred.
         """
         if self.slot_used(slot_id):
-            raise OSError("cannot allocate used slot!")
+            raise OSError("EEXISTS")
         
         slots = self.get_i32("slots")
         slots |= 1 << slot_id
@@ -68,7 +76,7 @@ class NetworkConfig(ReadOnlyNVS):
         Mark a slot as freed. The changes are instantly committed.
         """
         if not self.slot_used(slot_id):
-            raise OSError("cannot free already freed slot!")
+            raise OSError("EINVAL")
         
         # Prevent dangling reference to the now unused slot.
         if self.get_i32("last") == slot_id:
@@ -150,7 +158,6 @@ class WiFiManager:
         self.wlan = WLAN(WLAN.IF_STA)
         self.scan_results = []
 
-
     # TODO: Bring up should run in a separate thread
     def bring_up(self) -> bool:
         """
@@ -158,7 +165,7 @@ class WiFiManager:
         slots.
         """
         self.wlan.active(True)
-        self.scan_results = self.wlan.scan()
+        self.rescan()
         self.wlan.config(reconnects=10)
 
         # Try most recently associated network
@@ -184,11 +191,14 @@ class WiFiManager:
                 return True
 
         # No networks available/registered. 
-        logs.print_warning("recovery", "no networks available")
+        logs.print_warning("recovery", "no networks found")
         return False
     
     def link_is_up(self) -> bool:
         return self.wlan.isconnected()
+    
+    def link_status(self) -> int:
+        return self.wlan.status()
 
     def try_connect(self, last_network: tuple[str, int, str]) -> bool:
         ssids = [res[0].decode() for res in self.scan_results]
@@ -198,19 +208,49 @@ class WiFiManager:
             return False
         
         if last_network[1] == network.WLAN.SEC_OPEN:
-            self.wlan.connect(last_network[0])
+            self.wlan.connect(last_network[0], "")
         else:
             self.wlan.connect(last_network[0], last_network[2])
 
         # Wait for proper connection.
         while self.wlan.status() == network.STAT_CONNECTING:
-            print('waiting')
             time.sleep_ms(100)
 
         network_state = self.wlan.status()
-        logs.print_info("net", f"got ending wifi state {network_state}")
+        logs.print_info("net", f"nic state {network_state}")
 
         return network_state == network.STAT_GOT_IP
     
     def get_ip(self) -> str:
         return self.wlan.ipconfig("addr4")[0]
+    
+    def assoc_new(self, network: tuple[str, int, str]) -> bool:
+        """
+        Associate to a new, unregistered network. If the connection succeeds,
+        then the connection information will be saved to NVS.
+        """
+
+        if not self.try_connect(network):
+            return False
+        
+        new_slot = self.net_cfg.get_free_slot()
+
+        if new_slot is None:
+            raise OSError("ENOSPC")
+        
+        self.net_cfg.set_slot(new_slot, *network)
+        return True
+    
+    def rescan(self) -> list[tuple[bytes, bytes, int, int, int, int]]:
+        """
+        Scan the local area for wifi access points.
+        """
+        self.scan_results = self.wlan.scan()
+        return self.scan_results
+    
+    def decode_status(self) -> str:
+        """
+        Convert the integer status code to something readable.
+        """
+        status = self.wlan.status()
+        return _STATUS_DECODE.get(status, f"{status}")

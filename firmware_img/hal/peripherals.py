@@ -1,4 +1,4 @@
-from hal import wifi, fbcon, ssd1309
+from hal.drivers import wifi
 from machine import Pin, ADC, I2C
 from micropython import const
 from time import sleep_ms

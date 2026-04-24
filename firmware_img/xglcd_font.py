@@ -79,7 +79,7 @@ class XglcdFont(object):
                 
                 offset += bytes_per_letter
 
-    def get_letter(self, letter: str, invert=False) -> tuple[FrameBuffer | None, int, int]:
+    def get_letter(self, letter: str, invert=False, rotate=0) -> tuple[FrameBuffer | None, int, int]:
         """Convert letter byte data to pixels.
 
         Args:
@@ -135,7 +135,45 @@ class XglcdFont(object):
             pos += 1
 
         fb = FrameBuffer(ba2, width, height, MONO_VLSB)
-        return fb, width, height
+
+        if rotate == 0:  # 0 degrees
+            return fb, width, height
+        
+        elif rotate == 90:  # 90 degrees
+            byte_width = (width - 1) // 8 + 1
+            adj_size = height * byte_width
+            fb2 = FrameBuffer(bytearray(adj_size), height, width, MONO_VLSB)
+
+            for y in range(height):
+                for x in range(width):
+                    fb2.pixel(y, x, fb.pixel(x, (height - 1) - y))
+
+            return fb2, height, width
+        
+        elif rotate == 180:  # 180 degrees
+            fb2 = FrameBuffer(bytearray(array_size), width, height, MONO_VLSB)
+
+            for y in range(height):
+                for x in range(width):
+                    fb2.pixel(x, y,
+                              fb.pixel((width - 1) - x, (height - 1) - y))
+                    
+            return fb2, width, height
+        
+        elif rotate == 270:  # 270 degrees
+            byte_width = (width - 1) // 8 + 1
+            adj_size = height * byte_width
+            fb2 = FrameBuffer(bytearray(adj_size), height, width, MONO_VLSB)
+
+            for y in range(height):
+                for x in range(width):
+                    fb2.pixel(y, x, fb.pixel((width - 1) - x, y))
+
+            return fb2, height, width
+        
+        else:
+            print("unsupported rotation angle")
+            return None, 0, 0
 
     def measure_text(self, text: str, spacing=1):
         """Measure length of text string in pixels.

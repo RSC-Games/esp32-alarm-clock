@@ -362,7 +362,7 @@ class WLAN:
             * 1 -- hidden
         """
         ...
-    def status(self, param: Optional[Any] = None) -> List[int]:
+    def status(self, param: Optional[Any] = None) -> int:
         """
         Return the current status of the wireless connection.
 

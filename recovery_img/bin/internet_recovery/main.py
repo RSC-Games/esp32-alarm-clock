@@ -1,12 +1,14 @@
+from internet_recovery import wifi_menu
 from esp import osdebug, LOG_INFO
+from hal import peripherals, osk
 from micropython import const
-from hal import peripherals
 import recovery_utils
 import requests
 import logs
 import sys
 
 _CHUNK_SIZE = const(32768)
+_RELEASE_URL = const("https://api.github.com/repos/rsc-games/esp32-alarm-clock/releases/latest")
 _HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36'}
 
 # Find the raw download urls for the firm components.
@@ -16,7 +18,7 @@ def get_artifact_urls(latest_release_url: str) -> tuple[str, str]:
     release_data = requests.get(latest_release_url, headers=_HEADERS)
 
     if release_data.status_code != 200:
-        raise OSError(f"download failure (code {release_data.status_code})")
+        raise OSError(f"code {release_data.status_code}")
 
     manifest = release_data.json()
     logs.print_info("recovery", f"found release \"{manifest["tag_name"]}\"")
@@ -37,7 +39,7 @@ def get_artifact_urls(latest_release_url: str) -> tuple[str, str]:
         # TODO: read the artifact["digest"] field for the hash
 
     if len(out) != 2:
-        logs.print_error("recovery", "unable to locate one or more firm urls")
+        logs.print_error("recovery", "unable to find firm urls")
         raise RuntimeError("unable to find firm urls")
     
     return out["clock_firm.img"], out["clock_firm.img.sig"]
@@ -50,7 +52,7 @@ def download_artifact(artifact_url: str, install_path: str) -> None:
     firm_bin_res = requests.get(artifact_url, headers=_HEADERS)
 
     if firm_bin_res.status_code != 200:
-        raise OSError(f"download failure (code {firm_bin_res.status_code})")
+        raise OSError(f"code {firm_bin_res.status_code}")
     
     buf = memoryview(bytearray(_CHUNK_SIZE))
     f = open(install_path, "wb")
@@ -84,21 +86,24 @@ def main():
     # Boot splash (effectively)
     peripherals.FBCON.write_line("i: getting connection results")
     osdebug(LOG_INFO)
+
+    peripherals.FBCON.set_hidden(True)
+    osk.prompt_ok("RECOVERY", ["Connecting to", "the internet to", "repair the", "firmware."])
     
     # Need network selection menu
     if not peripherals.NIC.link_is_up():
         peripherals.FBCON.write_line("w: no access point in range")
-        #peripherals.FBCON.set_hidden(True)
-        logs.print_error("recovery", "wifi menu not implemented; necessary to continue")
 
-        while not peripherals.NIC.link_is_up():
-            pass
-        # Attempt reconnection (again)
+        # No new connection could be made. Cannot continue recovery from here.
+        if not wifi_menu.run():
+            sys.exit(-1)
+
+        # Reconnection done; install time.
 
     try:
         # TODO: Move this code into an updater library
         peripherals.FBCON.write_line("i: locating firmware files")
-        firm_url, firm_sig_url = get_artifact_urls("https://api.github.com/repos/rsc-games/esp32-alarm-clock/releases/latest")
+        firm_url, firm_sig_url = get_artifact_urls(_RELEASE_URL)
         
         # Download firm files
         peripherals.FBCON.write_line("i: downloading firm/sig")
@@ -115,9 +120,6 @@ def main():
 
     except (OSError, RuntimeError) as ie:
         peripherals.FBCON.write_line("e: firmware download failure")
-        logs.print_error("recovery", "unable to download firmware files")
+        logs.print_error("recovery", "unable to download firm")
         sys.print_exception(ie)
-
-        while True:
-            pass
         sys.exit(-1)

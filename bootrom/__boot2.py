@@ -91,6 +91,21 @@ _SD_BUS_MISO = micropython.const(12)
 _SD_BUS_MOSI = micropython.const(13)
 _SD_BUS_CS = micropython.const(15)
 
+# Wrapper. Runs a mandatory GC run to reduce fragmentation.
+#
+# TODO: Only for debugging bootrom memory usage.
+def gc_clean(func):
+    def func_wrap(*args):
+        mem_start = gc.mem_alloc()
+        ret = func(*args)
+        mem_func = gc.mem_alloc()
+        gc.collect()
+        gc.collect()
+        mem_after = gc.mem_alloc()
+        logs.print_info("boot", f"Function started with {mem_start} B alloc, ended with {mem_func} B, cleaned {mem_after} B. GC freed {mem_func - mem_after} B")
+        return ret
+    return func_wrap
+
 # Display potential errors at rom boot time. Errors can and will be reported as
 # LED flash codes (starting with long flashes, then short flashes). A short list
 # of error codes will be displayed below. Long flashes indicate an error category,
@@ -165,6 +180,7 @@ def _fatal_error_led(pubkey: RSA | None, boot_nvs: ReadOnlyNVS | None, long_flas
 # Avoid accidentally importing any unverified files on the raw filesystem
 #
 # NOTE: Pointer erased at boot lockout.
+@gc_clean
 def _boot_clean_syspath() -> None:
     sys.path.clear()
     sys.path.append(".frozen")
@@ -191,6 +207,7 @@ def _boot_clean_syspath() -> None:
 # TODO: Add support for the shared key.
 #
 # NOTE: Pointer erased at boot lockout.
+@gc_clean
 def _boot_load_nvs(pubkey: RSA) -> ReadOnlyNVS:
     from machine import unique_id
     from binascii import hexlify
@@ -369,6 +386,7 @@ def _boot_launch_uart_rcm(pubkey: RSA, nvs: ReadOnlyNVS) -> NoReturn:
 # to load it from).
 #
 # NOTE: Pointer erased at boot lockout.
+@gc_clean
 def _boot_mount_payload_fs(mount_pt: str, f_path: str, bin: memoryview[int]) -> None:
     from io import BytesIO
     from vfs import mount
@@ -478,6 +496,7 @@ def _boot_exec_signed_firm(pubkey: RSA, nvs: ReadOnlyNVS, sig: memoryview[int], 
 # Mount the NOR as the root filesystem unless SD boot has been enabled.
 #
 # NOTE: Pointer erased at boot lockout.
+@gc_clean
 def _boot_mount_root(pubkey: RSA, nvs: ReadOnlyNVS, boot_from_sd: bool) -> None:
     from machine import Pin
     from vfs import mount
@@ -541,7 +560,9 @@ def _boot_mount_root(pubkey: RSA, nvs: ReadOnlyNVS, boot_from_sd: bool) -> None:
 # returns the error code.
 #
 # NOTE: Pointer erased at boot lockout.
-def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, firm_name: str, sd_boot: bool) -> tuple[int, int] | None:
+@gc_clean
+def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, firm_name: str, sd_boot: bool, 
+                            version_check=True) -> tuple[int, int] | None:
     from __firmimg import FirmwareImage
     from vfs import mount, umount
     import os
@@ -635,9 +656,9 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, firm_name: str, sd_bo
         logs.print_error("boot", "failed to mount firmware")
         return flashes, 5
 
-    # Anti-downgrade firmware check.
+    # Anti-downgrade firmware check. Recovery firm does not have version checks.
     # NOTE: /firm/version is a single-line file with only a 4 byte number contained inside.
-    if not disable_sig_checks:
+    if not disable_sig_checks and version_check:
         last_booted_ver = nvs.get_i32("version")
 
         if not exists("/firm/version"):
@@ -669,6 +690,7 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, firm_name: str, sd_bo
 # for custom code)
 #
 # NOTE: Pointer erased at boot lockout.
+@gc_clean
 def _boot_read_firm_file(pubkey: RSA, nvs: ReadOnlyNVS) -> bytes:
     boot_mpy = nvs.get_i32("boot_mpy")
 
@@ -687,6 +709,7 @@ def _boot_read_firm_file(pubkey: RSA, nvs: ReadOnlyNVS) -> bytes:
 # external code from calling back into the bootloader.
 #
 # NOTE: This function stubs itself too.
+@gc_clean
 def _boot_lockout(nvs: ReadOnlyNVS, nvs_lockout=True) -> None:
     global _boot_clean_syspath
     global _boot_load_nvs
@@ -780,8 +803,11 @@ def boot_main() -> None:
     err_code = _boot_validate_firmware(pubkey, boot_nvs, f"{boot_nvs.get_str("firm")}.img", sd_boot)
 
     # Load recovery module (if possible; otherwise panic)
-    if not (err_code is None or _boot_validate_firmware(pubkey, boot_nvs, "recovery.img", sd_boot) is None):
-        _fatal_error_led(pubkey, boot_nvs, err_code[0], err_code[1])
+    if err_code is not None:
+        err_code_recovery = _boot_validate_firmware(pubkey, boot_nvs, "recovery.img", sd_boot, version_check=False)
+
+        if err_code_recovery is not None:
+            _fatal_error_led(pubkey, boot_nvs, err_code[0], err_code[1])
 
     # Load firmboot.bin and execute it.
     firm_bin = _boot_read_firm_file(pubkey, boot_nvs)

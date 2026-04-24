@@ -1,7 +1,7 @@
 import socket
 
 class Response:
-    def __init__(self, f, code: int, reason: bytes | str):
+    def __init__(self, f, code: int, reason: bytes):
         self.status_code = code
         self.reason = reason
         self.raw = f
@@ -40,6 +40,7 @@ def request(
     json=None,
     headers=None,
     stream=None,
+    auth=None,
     timeout=None,
     parse_headers=True,
 ) -> Response:
@@ -51,15 +52,24 @@ def request(
     redirect = None  # redirection url, None means no redirection
     chunked_data = data and getattr(data, "__next__", None) and not getattr(data, "__len__", None)
 
+    if auth is not None:
+        import binascii
+
+        username, password = auth
+        formatted = b"{}:{}".format(username, password)
+        formatted = str(binascii.b2a_base64(formatted)[:-1], "ascii")
+        headers["Authorization"] = "Basic {}".format(formatted)
+
     try:
-        proto, _, host, path = url.split("/", 3)
+        proto, dummy, host, path = url.split("/", 3)
     except ValueError:
-        proto, _, host = url.split("/", 2)
+        proto, dummy, host = url.split("/", 2)
         path = ""
     if proto == "http:":
         port = 80
     elif proto == "https:":
         import tls
+
         port = 443
     else:
         raise ValueError("Unsupported protocol: " + proto)
@@ -185,5 +195,25 @@ def request(
         return resp
 
 
+def head(url, **kw) -> Response:
+    return request("HEAD", url, **kw)
+
+
 def get(url, **kw) -> Response:
     return request("GET", url, **kw)
+
+
+def post(url, **kw):
+    return request("POST", url, **kw)
+
+
+def put(url, **kw):
+    return request("PUT", url, **kw)
+
+
+def patch(url, **kw):
+    return request("PATCH", url, **kw)
+
+
+def delete(url, **kw):
+    return request("DELETE", url, **kw)

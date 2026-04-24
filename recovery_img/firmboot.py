@@ -9,6 +9,7 @@ import os
 sys.path.append("/firm/bin")
 
 import recovery_utils
+from hal import osk
 
 # Clean up/fix the main firmware package after a failed update.
 # Update failure will likely come from a power outage while installing
@@ -46,7 +47,7 @@ def _fixup_bad_update_secure() -> bool:
     if active_firm_present and active_sig_present:
         # Try to bail out of this one (super unlikely but worth a shot)
         if new_sig_present and new_firm_present:
-            logs.print_info("recovery", "installing local update and hoping this works (unlikely)")
+            logs.print_info("recovery", "trying local update install")
             recovery_utils.install_new_firmware_local()
             return True
 
@@ -55,7 +56,7 @@ def _fixup_bad_update_secure() -> bool:
     # Case 1 (sig missing) -> FIX: attempt to install local firmware update.
     elif active_firm_present:
         if not new_sig_present or not new_firm_present:
-            logs.print_warning("recovery", "stg1 fail: no active sig and missing update files")
+            logs.print_warning("recovery", "stg1 fail: no active sig/firm present")
             return False
         
         recovery_utils.install_new_firmware_local()
@@ -74,7 +75,7 @@ def _fixup_bad_update_secure() -> bool:
             return True
         
         # New firmware isn't present and neither is old firmware?
-        logs.print_warning("recovery", "stg1 fail: no available firms to install")
+        logs.print_warning("recovery", "stg1 fail: no firms present")
 
     # Case 2 (nothing's there) -> FIX: attempt to install local firmware update.
     else:
@@ -88,14 +89,14 @@ def _fixup_bad_update_secure() -> bool:
             recovery_utils.install_new_firmware_local(".old")
             return True
         
-        logs.print_warning("recovery", "stg1 fail: no working firm candidates")
+        logs.print_warning("recovery", "stg1 fail: no intact firms")
 
     return False
 
 
 # Insecure variant (TODO: later)
 def _fixup_bad_update() -> bool:
-    logs.print_warning("recovery", "stg1 fail: insecure repair not implemented")
+    logs.print_warning("recovery", "stg1 fail: mode not supported")
     return False
 
 
@@ -114,7 +115,7 @@ def _fixup_bad_update() -> bool:
 # itself is damaged, the device must be reimaged/repaired with a UART recovery
 # payload.
 def app_main(nvs: ReadOnlyNVS):
-    logs.print_warning("recovery", "booted recovery firmware")
+    logs.print_warning("recovery", "booted recovery firm")
 
     # firmfs size:
     f_bsize, _, f_blocks, f_bfree, _, _, _, _, _, _ = os.statvfs("/firm")
@@ -124,7 +125,7 @@ def app_main(nvs: ReadOnlyNVS):
     prod_id = nvs.get_str("prod_id")
 
     if prod_id != "esp32_alarm_clock":
-        logs.print_error("recovery", f"unsupported device detected: {prod_id}")
+        logs.print_error("recovery", f"bad prod_id: {prod_id}")
         raise OSError("EINVAL")
     
     # TODO: Abort if we're booting from SD.
@@ -139,7 +140,7 @@ def app_main(nvs: ReadOnlyNVS):
         stage_one_successful = _fixup_bad_update_secure()
 
     if stage_one_successful:
-        logs.print_info("recovery", "restored firmware from NOR; rebooting")
+        logs.print_info("recovery", "NOR backup installed")
         machine.reset()
 
     # Perform stage 2 recovery. To actually develop this will require a lot of time
@@ -147,37 +148,33 @@ def app_main(nvs: ReadOnlyNVS):
     from hal import peripherals
     from hal.peripherals import FBCON
     FBCON.write_line("i: booted recovery firm (c) 2026")
-    FBCON.write_line("W: DEVICE FIRMWARE IS UNBOOTABLE!")
     FBCON.write_line("W: ATTEMPTING TO RECOVER DEVICE!")
     peripherals.init()
-
-    if peripherals.NIC.try_connect(("Pixel_5474", peripherals.NIC.wlan.SEC_WPA2, "1234567890")):
-        logs.print_info("recovery", f"got network ip addr {peripherals.NIC.get_ip()}")
-    else:
-        logs.print_warning("recovery", "connection failed")
 
     try:
         from internet_recovery import main
         main.main()
 
+        # System exit SHOULD be called in normal operation.
+
     except Exception as ie:
-        logs.print_error("recovery", "unhandled exception in firm")
+        logs.print_error("recovery", "fatal exception in firm")
         FBCON.set_hidden(False)
         FBCON.write_line("f: panic in recovery mode")
         sys.print_exception(ie)
         time.sleep(5)
 
     except SystemExit as exit:
-        FBCON.set_hidden(False)
 
         if exit.value == 0:  # type: ignore
-            logs.print_info("recovery", "downloaded and installed new firmware; rebooting")
-            FBCON.write_line("i: rebooting")
+            logs.print_info("recovery", "installed internet firm")
+            osk.prompt_ok("Recovery", ["Recovery", "successful!", "Reboot?"])
+
             machine.reset()
     
+        FBCON.set_hidden(False)
         FBCON.write_line("w: recovery failed")
-        logs.print_error("recovery", "stg2 fail. only option now is UART boot")
+        logs.print_error("recovery", "stg2 fail. UART boot req'd")
+        time.sleep(10)
 
-    FBCON.set_hidden(False)
-    FBCON.write_line("i: rebooting")
-    logs.print_info("recovery", "exit requested; rebooting")
+    machine.reset()
