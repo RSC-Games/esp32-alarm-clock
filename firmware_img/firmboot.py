@@ -1,10 +1,15 @@
 from __nvs_perms import ReadOnlyNVS
+import bootrom
+import time
 import logs
 import sys
 import os
 
 sys.path.append("/firm/bin")
 sys.path.append("/firm/app")
+
+from hal import peripherals
+import main
 
 # Hellooo clock firm! This firm runs the entire clock operating system
 # and supplies its many features. Here's what needs to be done:
@@ -26,11 +31,8 @@ sys.path.append("/firm/app")
 #       - Advanced -> (NVS: <unlocked>; Secure Boot / Allow SD Boot / Boot MPY/BIN / Lock NVS)
 #       - System Info -> (SN: <serial>/prod: <prod_id>/ver: <version>)
 #       - Licenses -> (Show licensing info for MicroPython, ucrypto, display driver)
-def firm_entry(nvs: ReadOnlyNVS):
-    try:        
-        from hal import peripherals
-        import main
-
+def app_main(nvs: ReadOnlyNVS):
+    try:
         # firmfs size:
         f_bsize, _, f_blocks, f_bfree, _, _, _, _, _, _ = os.statvfs("/firm")
         print(f"firmfs free/size: {f_bsize * f_bfree}/{f_bsize * f_blocks} B")
@@ -45,7 +47,6 @@ def firm_entry(nvs: ReadOnlyNVS):
     
     except BaseException as ie:
         sys.print_exception(ie)
-
-        while True:
-            pass
+        time.sleep(5)
+        bootrom.reboot_to_recovery()
 

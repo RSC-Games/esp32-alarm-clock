@@ -35,6 +35,40 @@ RECOVERY_IMG = bytes()
 # Recovery hash is pre-computed (to prevent injecting a bad image)
 RECOVERY_IMG_SHA256 = bytes()
 
+# TODO: Rewrite for imager
+# USB/UART recovery bootloader (data link layer)
+_UART_RCM_CONN_RETRIES = const(10)
+_UART_RCM_BANNER = const(b"\x55BOOT_RCM_RSC\xAA")
+_UART_RCM_CONN_ESTABLISHED = const(b"\xAARSC_RCM_BOOT\x55")
+
+# Header contains 8b header prefix then 4 byte length field
+# Meant to be used with struct.pack(). crc32 is calculated over the entire
+# packet minus the last 4 bytes (left as zeroes)
+# RCM packet has:
+# - 4 byte header
+# - 2 byte flags field (0b(ready)XXXXX(invalid)(badcrc))
+# - 2 byte length field (payload size + 4 bytes crc32)
+# - n - 4 bytes data payload
+# - 4 bytes crc32
+_UART_RCM_HEADER = const("<4sHH")
+_UART_RCM_PACKET = const("<8s{}sI")
+_UART_RCM_HEADER_PREFIX = const(b"\x64RCM")
+_UART_RCM_FLAG_READY = const(0x80)
+_UART_RCM_FLAG_ACCEPT = const(0x70)
+_UART_RCM_FLAG_COMMAND_ERROR = const(0x4)
+_UART_RCM_FLAG_INVALID_PACKET = const(0x2)
+_UART_RCM_FLAG_CORRUPT_PACKET = const(0x1)
+
+# RCM (transport layer)
+# - 2 byte command, 
+# - n - 2 bytes payload
+_UART_RCM_DATA_PACKET = const("<H{}s")
+
+# BOOT command payload has
+# - 512 bytes signature
+# - n - 512 bytes data
+_UART_RCM_CMD_BOOT = const(2)
+
 
 def mount_internal_fs() -> bool:
     """
@@ -81,14 +115,14 @@ def write_recovery_img() -> bool:
     are therefore unusable by the booted firm.
     """
 
-    logs.print_warning("imager", "installing fresh recovery.img")
+    logs.print_warning("imager", "installing recovery.img")
 
     # Verify recovery image hash (avoid writing a corrupt recovery image even
     # though in theory these payloads are signed).
     recovery_hash = sha256(RECOVERY_IMG).digest()
 
     if recovery_hash != RECOVERY_IMG_SHA256:
-        logs.print_error("imager", f"frozen recovery.img corrupt; got {hexlify(recovery_hash)}")
+        logs.print_error("imager", f"bad recovery.img; calc sha{hexlify(recovery_hash)}")
         return False
     
     with open("recovery.img", "wb") as recovery_f:
@@ -98,11 +132,152 @@ def write_recovery_img() -> bool:
 
 
 def do_command_parser():
-    # TODO: Steal from the bootrom command parser (with more commands)
-    logs.print_warning("imager", "entering binary command parser")
+    # TODO: Steal from the bootrom command parser (with more commands)    
+    from select import poll, POLLIN
+    from binascii import crc32
+    from io import BytesIO
+    import struct
+    import time
+
+    logs.print_warning("imager", "entering command parser")
+
+    rcm_pipe_in = sys.stdin.buffer
+    rcm_pipe_out = sys.stdout.buffer
+
+    # Stdin can't poll itself (and stdin/stdout actively prevents directly using
+    # the UART)
+    read_poll = poll()
+    read_poll.register(rcm_pipe_in, POLLIN)
+
+    def get_n_bytes(n: int, timeout_ms: int) -> bytes:
+        in_buf = BytesIO()
+        buf_len = 0
+
+        end_time = time.ticks_add(time.ticks_ms(), timeout_ms)
+
+        while (timeout_ms == -1 or time.ticks_diff(time.ticks_ms(), end_time) < 0) and buf_len < n:
+            if len(read_poll.poll(1)) != 0:
+                char = rcm_pipe_in.read(1)
+                in_buf.write(char)
+                buf_len += 1
+
+        return in_buf.getvalue()
     
-    while True:
-        pass
+    connected = False
+        
+    # Announce startup to connected device (if any)
+    for _ in range(0, _UART_RCM_CONN_RETRIES):
+        rcm_pipe_out.write(_UART_RCM_BANNER)
+        
+        # Wait for the connection accepted flag (if it exists)
+        read_chars = get_n_bytes(len(_UART_RCM_CONN_ESTABLISHED), 500)
+
+        # Connection accepted
+        if read_chars == _UART_RCM_CONN_ESTABLISHED:
+            connected = True
+            break
+
+        gc.collect()
+
+    if not connected:
+        from machine import reset
+
+        # Fatal: no pc connection
+        print()
+        logs.print_warning("boot", "connection to pc failed; rebooting")
+        _fatal_error_led(None, None, 4, 1, reboot=reset)
+
+    # Command packet parser.
+    header_sz = struct.calcsize(_UART_RCM_HEADER)
+
+    def build_packet(flags: int, payload: bytes) -> bytearray:
+        payload_sz = len(payload)
+        header = struct.pack(_UART_RCM_HEADER, _UART_RCM_HEADER_PREFIX, flags, payload_sz + 4)
+        data_packet = bytearray(header_sz + payload_sz + 4)
+
+        struct.pack_into(_UART_RCM_PACKET.format(payload_sz), data_packet, 0, header, payload, 0)
+        #crc = crc32(data_packet)
+        struct.pack_into("<I", data_packet, header_sz + payload_sz, crc32(data_packet))
+        return data_packet
+    
+    # Finish 3 way handshake
+    conn_packet = build_packet(_UART_RCM_FLAG_READY, b"CONNECTION_READY")
+    rcm_pipe_out.write(conn_packet)
+    del conn_packet
+
+    while True:    
+        gc.collect()
+
+        # Wait for the header to be available.
+        header = get_n_bytes(header_sz, -1)
+
+        header_magic, flags, size = struct.unpack(_UART_RCM_HEADER, header)
+        del header
+
+        # Ensure valid header (can't really read anything with an illegal header)
+        # NOTE: This will spam packets to the host until the payload is fully transferred
+        # unless transmission is cut off early.
+        if header_magic != _UART_RCM_HEADER_PREFIX:
+            err_packet = build_packet(_UART_RCM_FLAG_INVALID_PACKET, b"BAD_HEADER")
+            rcm_pipe_out.write(err_packet)
+            continue
+
+        # Max payload size is 32 kB to avoid memory allocation issues in the FIRM.
+        if size >= 32768:
+            err_packet = build_packet(_UART_RCM_FLAG_INVALID_PACKET, b"E_TOO_LONG")
+            rcm_pipe_out.write(err_packet)
+
+            # Read everything left in the packet anyway (but don't allocate memory for it)
+            # to reduce the chance of desynchronizing with the PC
+            dump_buf = bytearray(4096)
+            rcm_pipe_in.read(size % len(dump_buf))
+
+            for _ in range(size // len(dump_buf)):
+                rcm_pipe_in.readinto(dump_buf)  # type: ignore
+
+            continue
+
+        # NOTE: Flags are a DONT CARE (ignore them)
+        # Read the rest of the packet payload.
+        packet = bytearray(header_sz + size)
+        payload_section = memoryview(packet)[header_sz:]
+
+        struct.pack_into(_UART_RCM_HEADER, packet, 0, header_magic, flags, size)
+
+        # Ensure CRC section is zeroed
+        rcm_pipe_in.readinto(payload_section, size - 4)  # type: ignore
+        recv_crc = int.from_bytes(rcm_pipe_in.read(4), "little")
+
+        # Ensure packet hasn't been corrupted during transfer.
+        if crc32(packet) != recv_crc:
+            err_packet = build_packet(_UART_RCM_FLAG_CORRUPT_PACKET, b"BAD_CRC")
+            rcm_pipe_out.write(err_packet)
+            continue
+
+        del packet, header_magic, flags, size, recv_crc
+
+        # Packet accepted
+        conn_packet = build_packet(_UART_RCM_FLAG_ACCEPT, b"CMD_ACCEPTED")
+        rcm_pipe_out.write(conn_packet)
+        del conn_packet
+
+        # Process packet data
+        packet_cmd = int.from_bytes(payload_section[:2], 'little')
+        transport_layer_payload = payload_section[2:-4]
+
+        # Should use a switch statement/LUT but ehh
+        if packet_cmd == _UART_RCM_CMD_BOOT:  # BOOT_FIRM
+            valid = _boot_exec_signed_firm(pubkey, nvs, transport_layer_payload[:512], transport_layer_payload[512:])
+
+            if not valid:
+                err_packet = build_packet(_UART_RCM_FLAG_COMMAND_ERROR, b"BAD_SIGNATURE")
+                rcm_pipe_out.write(err_packet)
+
+            # Won't ever return if the signature is valid.
+
+        else:
+            err_packet = build_packet(_UART_RCM_FLAG_COMMAND_ERROR, f"E_INVAL:{packet_cmd}".encode())
+            rcm_pipe_out.write(err_packet)
 
 
 # For an alarm clock to boot, it needs to have the following provisioned:
@@ -126,7 +301,7 @@ def firm_entry(pubkey: RSA, nvs: ReadOnlyNVS):
     logs.print_info("imager", f"{_PRODUCT_ID} imager firm booted")
 
     if nvs.get_str("prod_id") != _PRODUCT_ID:
-        logs.print_error("imager", f"wrong product id. aborting")
+        logs.print_error("imager", f"bad product id")
         return
 
     if not _FAST_APP_REIMAGE:
@@ -143,4 +318,4 @@ def firm_entry(pubkey: RSA, nvs: ReadOnlyNVS):
         # command parser time (for installing firmware files)
         do_command_parser()
 
-    logs.print_info("imager", "imager firm DONE; all required files installed")
+    logs.print_info("imager", "imager firm DONE")
