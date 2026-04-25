@@ -830,7 +830,7 @@ def boot_main() -> None:
 
     # Load recovery module (if possible; otherwise panic)
     if err_code is not None:
-        err_code_recovery = _boot_validate_firmware(pubkey, boot_nvs, "recovery.img", sd_boot, version_check=False)
+        err_code_recovery = _boot_validate_firmware(pubkey, boot_nvs, "recovery.img", sd_boot, False)
 
         if err_code_recovery is not None:
             _fatal_error_led(pubkey, boot_nvs, err_code[0], err_code[1])
@@ -857,6 +857,8 @@ def boot_main() -> None:
         # (mostly for static type analysis reasons). This should never return.
         if hasattr(firmboot, "app_main") and callable(firmboot.app_main):
             firmboot.app_main(boot_nvs)
+
+        logs.print_info("boot", "firm returned (SHOULD NOT DO THIS)")
 
     except BaseException as ie:
         logs.print_error("boot", "fatal exception encountered; printing backtrace")

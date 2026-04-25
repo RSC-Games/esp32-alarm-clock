@@ -6,3 +6,6 @@ class NoReturn:
 
 class Any:
     pass
+
+class Callable:
+    pass
