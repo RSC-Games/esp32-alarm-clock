@@ -352,7 +352,7 @@ class Display(object):
             invert (bool): Invert color
             rotate (int): Rotation of letter
         """
-        fbuf, w, h = font.get_letter(letter, c, rotate=rotate)
+        fbuf, w, h = font.get_letter(letter, c == 0, rotate=rotate)
 
         # Check for errors
         if fbuf is None:

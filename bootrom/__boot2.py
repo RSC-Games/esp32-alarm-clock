@@ -52,7 +52,7 @@ _UART_RCM_CONN_ESTABLISHED = micropython.const(b"\xAARSC_RCM_BOOT\x55")
 # packet minus the last 4 bytes (left as zeroes)
 # RCM packet has:
 # - 4 byte header
-# - 2 byte flags field (0b(ready)XXXXX(invalid)(badcrc))
+# - 2 byte flags field (0b(ready)(okay)XXXX(invalid)(badcrc))
 # - 2 byte length field (payload size + 4 bytes crc32)
 # - n - 4 bytes data payload
 # - 4 bytes crc32

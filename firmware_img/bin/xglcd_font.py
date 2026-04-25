@@ -75,11 +75,11 @@ class XglcdFont(object):
 
                 # Convert hex strings to bytearray and insert in to letters
                 mv[offset: offset + bytes_per_letter] = bytearray(
-                    int(b, 16) for b in line.split(','))
+                    int(b.strip(), 16) for b in line.split(','))
                 
                 offset += bytes_per_letter
 
-    def get_letter(self, letter: str, c=1, rotate=0) -> tuple[FrameBuffer | None, int, int]:
+    def get_letter(self, letter: str, invert=False, rotate=0) -> tuple[FrameBuffer | None, int, int]:
         """Convert letter byte data to pixels.
 
         Args:
@@ -118,7 +118,7 @@ class XglcdFont(object):
         pos = 0
         ba2 = bytearray(array_size)
 
-        inv_val = 0xFF if c == 0 else 0x00
+        inv_val = 0xFF if invert else 0x00
 
         for i in range(0, array_size, byte_height):
             ba2[pos] = ba[i] ^ inv_val
