@@ -6,7 +6,7 @@ import sys
 import os
 
 # Windows-specific; port to linux later
-MPY_CROSS_PATH = f"{pathlib.Path(__file__).parent}/mpy-cross.exe"
+MPY_CROSS_PATH = "mpy-cross"#f"{pathlib.Path(__file__).parent}/mpy-cross.exe"
 MPY_CROSS_FLAGS = "-O2"
 RECOVERY_IMAGER_PATH = f"{pathlib.Path(__file__).parent}/payloads/factory_imager_base.py"
 MAX_RECOVERY_IMG_SIZE = int(28*1024)  # 2 kB FREE IN IMAGE (4 sectors)

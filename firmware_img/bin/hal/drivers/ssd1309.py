@@ -352,7 +352,7 @@ class Display(object):
             invert (bool): Invert color
             rotate (int): Rotation of letter
         """
-        fbuf, w, h = font.get_letter(letter, c == 0, rotate=rotate)
+        fbuf, w, h = font.get_letter(letter, invert=c == 0, rotate=rotate)
 
         # Check for errors
         if fbuf is None:
@@ -474,7 +474,7 @@ class Display(object):
         
         self.monoFB.blit(fbuf, x, y)
 
-    def draw_text(self, x: int, y: int, text: str, font, c=1, rotate=0, spacing=1) -> None:
+    def draw_text(self, x: int, y: int, text: str, font, c: int=1, rotate=0, spacing=1) -> None:
         """Draw text.
 
         Args:
@@ -497,7 +497,7 @@ class Display(object):
             if rotate == 0:
                 # Fill in spacing
                 if spacing:
-                    self.fill_rectangle(x + w, y, spacing, h, 1 - c)
+                    self.fill_rectangle(x + w, y, spacing, h, c)
                     
                 # Position x for next letter
                 x += (w + spacing)
@@ -505,21 +505,21 @@ class Display(object):
             elif rotate == 90:
                 # Fill in spacing
                 if spacing:
-                    self.fill_rectangle(x, y + h, w, spacing, 1 - c)
+                    self.fill_rectangle(x, y + h, w, spacing, c)
                 # Position y for next letter
                 y += (h + spacing)
             elif rotate == 180:
                 # Fill in spacing
                 if spacing:
                     self.fill_rectangle(x - w - spacing, y, spacing,
-                                        h, 1 - c)
+                                        h, c)
                 # Position x for next letter
                 x -= (w + spacing)
             elif rotate == 270:
                 # Fill in spacing
                 if spacing:
                     self.fill_rectangle(x, y - h - spacing, w, spacing,
-                                        1 - c)
+                                        c)
                 # Position y for next letter
                 y -= (h + spacing)
             else:

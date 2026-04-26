@@ -1,3 +1,4 @@
+from bootrom import reboot_to_uart, reboot_to_recovery
 from ucrypto.ufastrsa.rsa import RSA
 from __nvs_perms import ReadOnlyNVS
 from vfs import mount, VfsLfs2
@@ -5,9 +6,11 @@ from micropython import const
 from binascii import hexlify
 from esp32 import Partition
 from hashlib import sha256
+from machine import reset
 import time
 import logs
 import sys
+import gc
 
 #################################### CONFIGURATION ######################################
 
@@ -20,12 +23,12 @@ _SKIP_FORMAT_NOR = const(True)
 
 # Do not perform a filesystem format and do not reinject recovery to the filesystem.
 # Instead, the tool only writes the received <app_name>.img to NOR, then reboots.
-_FAST_APP_REIMAGE = const(False)
+_FAST_APP_REIMAGE = const(True)
 
 # Skip running the command parser after recovery injection. Useful for only formatting
 # the filesystem and reinstalling recovery.img. Speeds up device recovery but requires
 # an internet connection to install the main device firmware image.
-_SKIP_COMMAND_PARSER = const(True)
+_SKIP_COMMAND_PARSER = const(False)
 
 ################################## END CONFIGURATION ####################################
 
@@ -35,11 +38,10 @@ RECOVERY_IMG = bytes()
 # Recovery hash is pre-computed (to prevent injecting a bad image)
 RECOVERY_IMG_SHA256 = bytes()
 
-# TODO: Rewrite for imager
-# USB/UART recovery bootloader (data link layer)
-_UART_RCM_CONN_RETRIES = const(10)
-_UART_RCM_BANNER = const(b"\x55BOOT_RCM_RSC\xAA")
-_UART_RCM_CONN_ESTABLISHED = const(b"\xAARSC_RCM_BOOT\x55")
+# Device imager protocol (data link layer). Mostly reused from bootrom
+_IMAGER_CONN_RETRIES = const(10)
+_IMAGER_BANNER = const(b"\x55IMAGER_COMM_DEV\xAA")
+_IMAGER_CONN_ESTABLISHED = const(b"\xAAIMAGER_COMM_PC\x55")
 
 # Header contains 8b header prefix then 4 byte length field
 # Meant to be used with struct.pack(). crc32 is calculated over the entire
@@ -50,24 +52,27 @@ _UART_RCM_CONN_ESTABLISHED = const(b"\xAARSC_RCM_BOOT\x55")
 # - 2 byte length field (payload size + 4 bytes crc32)
 # - n - 4 bytes data payload
 # - 4 bytes crc32
-_UART_RCM_HEADER = const("<4sHH")
-_UART_RCM_PACKET = const("<8s{}sI")
-_UART_RCM_HEADER_PREFIX = const(b"\x64RCM")
-_UART_RCM_FLAG_READY = const(0x80)
-_UART_RCM_FLAG_ACCEPT = const(0x70)
-_UART_RCM_FLAG_COMMAND_ERROR = const(0x4)
-_UART_RCM_FLAG_INVALID_PACKET = const(0x2)
-_UART_RCM_FLAG_CORRUPT_PACKET = const(0x1)
+_IMAGER_HEADER = const("<4sHH")
+_IMAGER_PACKET = const("<8s{}sI")
+_IMAGER_HEADER_PREFIX = const(b"\x64RCM")
+_IMAGER_FLAG_READY = const(0x80)
+_IMAGER_FLAG_ACCEPT = const(0x40)
+_IMAGER_FLAG_COMMAND_ERROR = const(0x4)
+_IMAGER_FLAG_INVALID_PACKET = const(0x2)
+_IMAGER_FLAG_CORRUPT_PACKET = const(0x1)
 
 # RCM (transport layer)
 # - 2 byte command, 
 # - n - 2 bytes payload
-_UART_RCM_DATA_PACKET = const("<H{}s")
+_IMAGER_DATA_PACKET = const("<H{}s")
 
-# BOOT command payload has
+# WRITE_FIRM command payload has
 # - 512 bytes signature
 # - n - 512 bytes data
-_UART_RCM_CMD_BOOT = const(2)
+_IMAGER_CMD_WRITE_FIRM = const(3)
+_IMAGER_CMD_R2B_UART = const(4)
+_IMAGER_CMD_R2B_RECOVERY = const(5)
+_IMAGER_CMD_REBOOT = const(6)
 
 
 def mount_internal_fs() -> bool:
@@ -131,7 +136,7 @@ def write_recovery_img() -> bool:
     return True
 
 
-def do_command_parser():
+def do_command_parser(nvs: ReadOnlyNVS):
     # TODO: Steal from the bootrom command parser (with more commands)    
     from select import poll, POLLIN
     from binascii import crc32
@@ -166,42 +171,40 @@ def do_command_parser():
     connected = False
         
     # Announce startup to connected device (if any)
-    for _ in range(0, _UART_RCM_CONN_RETRIES):
-        rcm_pipe_out.write(_UART_RCM_BANNER)
+    for _ in range(0, _IMAGER_CONN_RETRIES):
+        rcm_pipe_out.write(_IMAGER_BANNER)
         
         # Wait for the connection accepted flag (if it exists)
-        read_chars = get_n_bytes(len(_UART_RCM_CONN_ESTABLISHED), 500)
+        read_chars = get_n_bytes(len(_IMAGER_CONN_ESTABLISHED), 500)
 
         # Connection accepted
-        if read_chars == _UART_RCM_CONN_ESTABLISHED:
+        if read_chars == _IMAGER_CONN_ESTABLISHED:
             connected = True
             break
 
         gc.collect()
 
     if not connected:
-        from machine import reset
-
         # Fatal: no pc connection
         print()
-        logs.print_warning("boot", "connection to pc failed; rebooting")
-        _fatal_error_led(None, None, 4, 1, reboot=reset)
+        logs.print_warning("imager", "conn timed out")
+        reboot_to_uart()
 
     # Command packet parser.
-    header_sz = struct.calcsize(_UART_RCM_HEADER)
+    header_sz = struct.calcsize(_IMAGER_HEADER)
 
     def build_packet(flags: int, payload: bytes) -> bytearray:
         payload_sz = len(payload)
-        header = struct.pack(_UART_RCM_HEADER, _UART_RCM_HEADER_PREFIX, flags, payload_sz + 4)
+        header = struct.pack(_IMAGER_HEADER, _IMAGER_HEADER_PREFIX, flags, payload_sz + 4)
         data_packet = bytearray(header_sz + payload_sz + 4)
 
-        struct.pack_into(_UART_RCM_PACKET.format(payload_sz), data_packet, 0, header, payload, 0)
+        struct.pack_into(_IMAGER_PACKET.format(payload_sz), data_packet, 0, header, payload, 0)
         #crc = crc32(data_packet)
         struct.pack_into("<I", data_packet, header_sz + payload_sz, crc32(data_packet))
         return data_packet
     
     # Finish 3 way handshake
-    conn_packet = build_packet(_UART_RCM_FLAG_READY, b"CONNECTION_READY")
+    conn_packet = build_packet(_IMAGER_FLAG_READY, b"DEV_READY")
     rcm_pipe_out.write(conn_packet)
     del conn_packet
 
@@ -211,20 +214,19 @@ def do_command_parser():
         # Wait for the header to be available.
         header = get_n_bytes(header_sz, -1)
 
-        header_magic, flags, size = struct.unpack(_UART_RCM_HEADER, header)
+        header_magic, flags, size = struct.unpack(_IMAGER_HEADER, header)
         del header
 
         # Ensure valid header (can't really read anything with an illegal header)
-        # NOTE: This will spam packets to the host until the payload is fully transferred
-        # unless transmission is cut off early.
-        if header_magic != _UART_RCM_HEADER_PREFIX:
-            err_packet = build_packet(_UART_RCM_FLAG_INVALID_PACKET, b"BAD_HEADER")
+        if header_magic != _IMAGER_HEADER_PREFIX:
+            err_packet = build_packet(_IMAGER_FLAG_CORRUPT_PACKET, b"BAD_HEADER")
             rcm_pipe_out.write(err_packet)
             continue
 
         # Max payload size is 32 kB to avoid memory allocation issues in the FIRM.
-        if size >= 32768:
-            err_packet = build_packet(_UART_RCM_FLAG_INVALID_PACKET, b"E_TOO_LONG")
+        # TODO: circumvent packet size limits with layer 2 framing
+        if size >= 65536:
+            err_packet = build_packet(_IMAGER_FLAG_INVALID_PACKET, b"E_TOO_LONG")
             rcm_pipe_out.write(err_packet)
 
             # Read everything left in the packet anyway (but don't allocate memory for it)
@@ -242,7 +244,7 @@ def do_command_parser():
         packet = bytearray(header_sz + size)
         payload_section = memoryview(packet)[header_sz:]
 
-        struct.pack_into(_UART_RCM_HEADER, packet, 0, header_magic, flags, size)
+        struct.pack_into(_IMAGER_HEADER, packet, 0, header_magic, flags, size)
 
         # Ensure CRC section is zeroed
         rcm_pipe_in.readinto(payload_section, size - 4)  # type: ignore
@@ -250,14 +252,14 @@ def do_command_parser():
 
         # Ensure packet hasn't been corrupted during transfer.
         if crc32(packet) != recv_crc:
-            err_packet = build_packet(_UART_RCM_FLAG_CORRUPT_PACKET, b"BAD_CRC")
+            err_packet = build_packet(_IMAGER_FLAG_CORRUPT_PACKET, b"BAD_CRC")
             rcm_pipe_out.write(err_packet)
             continue
 
         del packet, header_magic, flags, size, recv_crc
 
         # Packet accepted
-        conn_packet = build_packet(_UART_RCM_FLAG_ACCEPT, b"CMD_ACCEPTED")
+        conn_packet = build_packet(_IMAGER_FLAG_ACCEPT, b"OK")
         rcm_pipe_out.write(conn_packet)
         del conn_packet
 
@@ -266,17 +268,29 @@ def do_command_parser():
         transport_layer_payload = payload_section[2:-4]
 
         # Should use a switch statement/LUT but ehh
-        if packet_cmd == _UART_RCM_CMD_BOOT:  # BOOT_FIRM
-            valid = _boot_exec_signed_firm(pubkey, nvs, transport_layer_payload[:512], transport_layer_payload[512:])
+        if packet_cmd == _IMAGER_CMD_WRITE_FIRM:  # WRITE_FIRM
+            firm_name = nvs.get_str("firm")
 
-            if not valid:
-                err_packet = build_packet(_UART_RCM_FLAG_COMMAND_ERROR, b"BAD_SIGNATURE")
-                rcm_pipe_out.write(err_packet)
+            with open(f"{firm_name}.img.sig", "wb") as f:
+                f.write(transport_layer_payload[:512])
+            
+            with open(f"{firm_name}.img", "wb") as f:
+                f.write(transport_layer_payload[512:])
 
-            # Won't ever return if the signature is valid.
+        elif packet_cmd == _IMAGER_CMD_R2B_UART:  # reboot to uart mode
+            time.sleep_ms(10)
+            reboot_to_uart()
+
+        elif packet_cmd == _IMAGER_CMD_R2B_RECOVERY:  # reboot to recovery.img
+            time.sleep_ms(50)
+            reboot_to_recovery()
+
+        elif packet_cmd == _IMAGER_CMD_REBOOT:  # reboot
+            time.sleep_ms(50)
+            reset()
 
         else:
-            err_packet = build_packet(_UART_RCM_FLAG_COMMAND_ERROR, f"E_INVAL:{packet_cmd}".encode())
+            err_packet = build_packet(_IMAGER_FLAG_COMMAND_ERROR, f"CMD:{packet_cmd}".encode())
             rcm_pipe_out.write(err_packet)
 
 
@@ -303,19 +317,19 @@ def firm_entry(pubkey: RSA, nvs: ReadOnlyNVS):
     if nvs.get_str("prod_id") != _PRODUCT_ID:
         logs.print_error("imager", f"bad product id")
         return
+    
+    # internal fs format required/recovery.img injection
+    if not mount_internal_fs():
+        time.sleep(5)
+        return
 
-    if not _FAST_APP_REIMAGE:
-        # internal fs format required/recovery.img injection
-        if not mount_internal_fs():
-            time.sleep(5)
-            return
-        
+    if not _FAST_APP_REIMAGE:        
         if not write_recovery_img():
             time.sleep(5)
             return
 
     if not _SKIP_COMMAND_PARSER:
         # command parser time (for installing firmware files)
-        do_command_parser()
+        do_command_parser(nvs)
 
     logs.print_info("imager", "imager firm DONE")

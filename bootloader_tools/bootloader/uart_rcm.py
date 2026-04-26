@@ -18,7 +18,7 @@ _UART_RCM_CONN_ESTABLISHED = b"\xAARSC_RCM_BOOT\x55"
 # packet minus the last 4 bytes (left as zeroes)
 # RCM packet has:
 # - 4 byte header
-# - 2 byte flags field 0b(ready)XXXXX(invalid)(badcrc)
+# - 2 byte flags field 0b(ready)(okay)XXXX(invalid)(badcrc)
 # - 2 byte length field (payload size + 4 bytes crc32)
 # - n - 4 bytes data payload
 # - 4 bytes crc32
@@ -27,6 +27,7 @@ _UART_RCM_HEADER_LEN = struct.calcsize(_UART_RCM_HEADER)
 _UART_RCM_PACKET = "<8s{}sI"
 _UART_RCM_HEADER_PREFIX = b"\x64RCM"
 _UART_RCM_FLAG_READY = 0x80
+_UART_RCM_FLAG_OKAY = 0x40
 _UART_RCM_FLAG_COMMAND_ERROR = 0x4
 _UART_RCM_FLAG_INVALID_PACKET = 0x2
 _UART_RCM_FLAG_CORRUPT_PACKET = 0x1
@@ -207,7 +208,7 @@ def bootrom_is_ready(uart: serial.Serial) -> bool:
 
     output.print_tool(f"response: flags {flags} payload {payload}")
 
-    return flags & _UART_RCM_FLAG_READY != 0
+    return flags & (_UART_RCM_FLAG_READY | _UART_RCM_FLAG_OKAY) != 0
 
 
 def boot_payload(uart: serial.Serial, payload_path: str) -> bool:
@@ -223,7 +224,9 @@ def boot_payload(uart: serial.Serial, payload_path: str) -> bool:
     packet = _build_datalink_packet(0, firm_array)
     uart.write(packet)
 
-    #print(bootrom_is_ready(uart))
+    if not bootrom_is_ready(uart):
+        output.print_tool(f"payload injection failed")
+    
     return False
 
 

@@ -71,11 +71,11 @@ class XglcdFont(object):
                 
                 # Remove trailing commas
                 if line.endswith(','):
-                    line = line[0:len(line) - 1]
+                    line = line[0:len(line) - 1].strip()
 
                 # Convert hex strings to bytearray and insert in to letters
                 mv[offset: offset + bytes_per_letter] = bytearray(
-                    int(b.strip(), 16) for b in line.split(','))
+                    (int(b.strip(), 16) for b in line.split(',')))
                 
                 offset += bytes_per_letter
 

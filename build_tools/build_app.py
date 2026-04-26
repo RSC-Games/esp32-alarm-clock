@@ -4,9 +4,9 @@ import sys
 import os
 
 # Windows-specific; port to linux later
-MPY_CROSS_PATH = f"{pathlib.Path(__file__).parent}/mpy-cross.exe"
+MPY_CROSS_PATH = "mpy-cross"#f"{pathlib.Path(__file__).parent}/mpy-cross.exe"
 MPY_CROSS_FLAGS = "-O2"
-MAX_FIRM_IMG_SIZE = int(48*1024)  # Not space constrained
+MAX_FIRM_IMG_SIZE = int(52*1024)  # Not space constrained
 
 # Compile stages (recovery builder)
 # - Create build directory.

@@ -30,7 +30,7 @@ import main
 #       - Network -> (Active: <yes>/NET: <ssid>; WiFi Enabled / Manage Networks / Register New)
 #       - Advanced -> (NVS: <unlocked>; Secure Boot / Allow SD Boot / Boot MPY/BIN / Lock NVS)
 #       - System Info -> (SN: <serial>/prod: <prod_id>/ver: <version>)
-#       - Licenses -> (Show licensing info for MicroPython, ucrypto, display driver)
+#       - Licenses -> (Show licensing info for MicroPython, ucrypto, display driver, xglcd)
 def app_main(nvs: ReadOnlyNVS):
     try:
         # firmfs size:

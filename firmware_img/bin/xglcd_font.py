@@ -57,7 +57,14 @@ class XglcdFont(object):
         offset = 0
 
         with open(path, 'r') as f:
+            # FIX: font lib tried to parse too many chars and overflowed
+            # the allocated buffer.
+            letter_idx = self.start_letter
+
             for line in f.readlines():
+                if letter_idx >= self.start_letter + self.letter_count:
+                    break
+
                 # Skip lines that do not start with hex values
 
                 line = line.strip()
@@ -71,13 +78,15 @@ class XglcdFont(object):
                 
                 # Remove trailing commas
                 if line.endswith(','):
-                    line = line[0:len(line) - 1]
-
+                    line = line[0:len(line) - 1].strip()
+                
                 # Convert hex strings to bytearray and insert in to letters
                 mv[offset: offset + bytes_per_letter] = bytearray(
                     int(b.strip(), 16) for b in line.split(','))
                 
                 offset += bytes_per_letter
+
+                letter_idx += 1
 
     def get_letter(self, letter: str, invert=False, rotate=0) -> tuple[FrameBuffer | None, int, int]:
         """Convert letter byte data to pixels.

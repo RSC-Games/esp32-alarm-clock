@@ -58,13 +58,11 @@ def init():
     
     # TODO: Make less ANNOYINGLY NOISY (set vcom_desel/precharge/clock div)
     # see https://www.hpinfotech.ro/SSD1309.pdf
-    NIC.bring_up()
+    # TODO: Background thread
+    #NIC.bring_up()
 
     # TODO: start pwr_sense monitoring driver to detect power loss events and prevent
     # the device from wasting CMOS battery energy
-
-    # init done
-    DISPLAY.present()
 
 
 # Return button state if pressed, after waiting on the state to change.

@@ -60,7 +60,7 @@ _UART_RCM_HEADER = micropython.const("<4sHH")
 _UART_RCM_PACKET = micropython.const("<8s{}sI")
 _UART_RCM_HEADER_PREFIX = micropython.const(b"\x64RCM")
 _UART_RCM_FLAG_READY = micropython.const(0x80)
-_UART_RCM_FLAG_ACCEPT = micropython.const(0x70)
+_UART_RCM_FLAG_ACCEPT = micropython.const(0x40)
 _UART_RCM_FLAG_COMMAND_ERROR = micropython.const(0x4)
 _UART_RCM_FLAG_INVALID_PACKET = micropython.const(0x2)
 _UART_RCM_FLAG_CORRUPT_PACKET = micropython.const(0x1)
@@ -881,4 +881,3 @@ except Exception as ie:
 finally:
     # Unspecified bootrom error (catch all)
     _fatal_error_led(None, None, 1, 6)
-        

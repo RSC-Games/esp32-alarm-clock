@@ -8,7 +8,7 @@ def compile_payload(payload: str) -> None:
 
     if os.path.exists(payload_source):
         # Precompile payload
-        ret = os.system(f"mpy-cross.exe {payload_source}")
+        ret = os.system(f"mpy-cross {payload_source}")
 
         if ret != 0:
             output.print_tool("precompile payload failed; injecting old version")
@@ -20,7 +20,7 @@ def main(payload: str):
     output.print_tool("attempting to open device...")
 
     try:
-        rcm = uart_rcm.open_device("COM3")
+        rcm = uart_rcm.open_device("/dev/ttyUSB1")
 
         t_start_ms = time.monotonic_ns() / 1_000_000
         uart_rcm.boot_payload(rcm, payload)

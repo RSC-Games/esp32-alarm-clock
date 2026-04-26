@@ -5,9 +5,12 @@ from hal import peripherals as dev
 from micropython import const
 import xglcd_font
 
-_OSK_WIDTH = const(96)
-_OSK_CHARSET_PX_OFFSET = const(23)
+_OSK_WIDTH = const(112)
+_OSK_CHARSET_PX_OFFSET = const(18)
+_OSK_KBD_PX_ALIGN = const(1)
+_OSK_OUTLINE_WIDTH = const(7) 
 _OSK_5x7_FONT_PATH = const("/firm/res/fonts/Neato5x7.c")
+_OSK_5x8_FONT_PATH = const("/firm/res/fonts/FixedFont5x8.c")
 _OSK_3x5_FONT_PATH = const("/firm/res/fonts/Tiny3x5.c")
 
 LAYOUT_KEYBOARD = const(0)
@@ -30,21 +33,21 @@ def prompt_text(key_layout: int, max_chars: int, hide_text=False) -> str:
     # Displayed keyboard sets (qwerty/QWERTY/symbols)
     qwerty_key_set = {
         "UPPER": [
-            ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],  # Number Row
+            ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", ""],  # Number Row ("BKSP")
             ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"],  # Charset row 1
             ["A", "S", "D", "F", "G", "H", "J", "K", "L"],       # Charset row 2
             ["Z", "X", "C", "V", "B", "N", "M"],                 # Charset row 3
             ("SPACE", " ", None, None)                           # SPACE ROW!
         ],
         "LOWER": [
-            ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],  # Number Row
+            ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", ""],  # Number Row ("BKSP")
             ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],  # Charset row 1
             ["a", "s", "d", "f", "g", "h", "j", "k", "l"],       # Charset row 2
             ["z", "x", "c", "v", "b", "n", "m"],                 # Charset row 3
             ("SPACE", " ", None, None)                           # SPACE ROW!
         ],
         "SYM": [
-            ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],  # Number Row
+            ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", ""],  # Number Row (BKSP)
             ["!", "@", "#", "$", "%", "^", "&", "*", "(", ")"],  # Charset row 1
             ["+", "-", "{", "}", "[", "]", "|", "\\", ":", ";"], # Charset row 2
             ["\"", "'", "<", ">", ",", ".", "?", "/", "=", "~"], # Charset row 3
@@ -55,7 +58,7 @@ def prompt_text(key_layout: int, max_chars: int, hide_text=False) -> str:
     # Numpad has a similar layout to the keyboard above
     numpad_key_set = {
         "NUM": [
-            ["7", "8", "9"],  # Number Row 1
+            ["7", "8", "9", ""],  # Number Row 1 (BKSP)
             ["4", "5", "6"],  # Number Row 2
             ["1", "2", "3"],  # Number Row 3
             ["-", "0", "."],  # Number Row 4
@@ -77,9 +80,11 @@ def prompt_text(key_layout: int, max_chars: int, hide_text=False) -> str:
 # wrapper.
 def _do_osk_input(keymaps: list[str], key_set: dict[str, list], max_chars: int, hide_text: bool) -> str:
     font_5x7 = xglcd_font.XglcdFont(_OSK_5x7_FONT_PATH, 5, 7)
+    font_5x8 = xglcd_font.XglcdFont(_OSK_5x8_FONT_PATH, 5, 8)
     font_3x5 = xglcd_font.XglcdFont(_OSK_3x5_FONT_PATH, 3, 5)
 
     keymap = keymaps[0]  # Default keyboard
+    caps = True  # Currently capitals
     char_string = []  # User entered data
     col = 0
     row = 0
@@ -93,6 +98,8 @@ def _do_osk_input(keymaps: list[str], key_set: dict[str, list], max_chars: int, 
     #     2: (x, y, w, h) for draw location and size of draw rect.
     # Compile the active keymap charset.
     char_coords_aliases = _compile_charset(key_set[keymap], _OSK_CHARSET_PX_OFFSET)
+
+    # TODO: Cool lerp animations for the caret and text
     
     while True:
         # A_BTN HANDLER: ENTER A CHARACTER.
@@ -108,10 +115,12 @@ def _do_osk_input(keymaps: list[str], key_set: dict[str, list], max_chars: int, 
             # Special key (SHIFT)
             elif cur_char[1] == "SHFT":
                 # Switch to upper/lowercase
-                if keymap == keymaps[0]:
+                if keymap == keymaps[0]:  # UPPER
                     keymap = keymaps[1]
-                elif keymap == keymaps[1]:
+                    caps = False
+                else:  # LOWER
                     keymap = keymaps[0]
+                    caps = True
                     
                 # Keymap changed; generate new one
                 char_coords_aliases = _compile_charset(key_set[keymap], _OSK_CHARSET_PX_OFFSET)
@@ -128,12 +137,27 @@ def _do_osk_input(keymaps: list[str], key_set: dict[str, list], max_chars: int, 
                 dev.wait_buttons_all_released()
                 continue
 
-            # TODO: Special key (BACKSPACE)
+            # Special key (BACKSPACE)
+            elif cur_char[1] == "BKSP":
+                if len(char_string) != 0:
+                    char_string.pop()
             
             # Normal key pressed
             else:
-                if len(char_string) <= max_chars:
+                if len(char_string) < max_chars:
                     char_string.append(cur_char[1])
+
+                # Zero length = auto caps
+                if len(char_string) == 0:
+                    caps = True
+                    keymap = keymaps[0]
+                    char_coords_aliases = _compile_charset(key_set[keymap], _OSK_CHARSET_PX_OFFSET)
+
+                # Auto lowercase
+                elif caps:
+                    caps = False
+                    keymap = keymaps[1]
+                    char_coords_aliases = _compile_charset(key_set[keymap], _OSK_CHARSET_PX_OFFSET)
 
                 dev.wait_buttons_all_released()
         
@@ -193,57 +217,78 @@ def _do_osk_input(keymaps: list[str], key_set: dict[str, list], max_chars: int, 
         # OSK frame
         # TODO: reshape the border for more efficient space usage.
         dev.DISPLAY.clear_buffers()
-        dev.DISPLAY.draw_rectangle(0, 0, 127, 63)
-        dev.DISPLAY.draw_hline(0, 21, 127)
+        dev.DISPLAY.draw_rectangle(0, 0, 128, 63)
+        dev.DISPLAY.draw_hline(0, 16, 128)
         
         # Draw keyboard on screen
-        y = 0
+        # y = 0
 
-        for y in range(len(key_set[keymap][row])):
-            # Column geometry, unlike row geometry, is not guaranteed to be the same 
-            # as in the keymap before compilation. 
-            x = 0
+        # for y in range(len(key_set[keymap][row])):
+        #     # Column geometry, unlike row geometry, is not guaranteed to be the same 
+        #     # as in the keymap before compilation. 
+        #     x = 0
 
-            while (x, y) in char_coords_aliases:
-                # TODO: Draw osk with 5x7 font (rather than the 8x8)
-                char = char_coords_aliases[(x, y)]
-                dev.DISPLAY.draw_text8x8(char[2][0], char[2][1], char[0])
-                x += 1
+        #     while (x, y) in char_coords_aliases:
+        #         # TODO: Draw osk with 5x7 font (rather than the 8x8)
+        #         char = char_coords_aliases[(x, y)]
+        #         dev.DISPLAY.draw_text(char[2][0] + _OSK_KBD_PX_ALIGN, char[2][1], char[0], font_5x7)
+        #         x += 1
             
-            y += 1
+        #     y += 1
+
+        # Draw keyboard on screen
+        # BUG: Old drawing code works but new code doesn't??
+        y = 0
+        try:
+            while True:
+                # Test access to this row.
+                _ = char_coords_aliases[(0, y)]
+                
+                # Now iterate over the x coordinate.
+                try:
+                    x = 0
+                    while True:
+                        char = char_coords_aliases[(x, y)]
+                        dev.DISPLAY.draw_text(char[2][0] + _OSK_KBD_PX_ALIGN, char[2][1], char[0], font_5x7)
+                        x += 1
+                except KeyError:
+                    pass
+                
+                y += 1
+        except KeyError:
+            pass
         
         # Highlight selected character
         cur_char = char_coords_aliases[(col, row)]
         char_rect = cur_char[2]
-
-        # TODO: Draw osk with 5x7 font (rather than the 8x8)
-        dev.DISPLAY.fill_rectangle(char_rect[0], char_rect[1], char_rect[2], char_rect[3], 1)
-        dev.DISPLAY.draw_text8x8(char_rect[0], char_rect[1], cur_char[0], 0)
+        dev.DISPLAY.fill_rectangle(char_rect[0], char_rect[1], char_rect[2], char_rect[3])
+        dev.DISPLAY.draw_text(char_rect[0] + _OSK_KBD_PX_ALIGN, char_rect[1], cur_char[0], font_5x7, 0)
         
+        char_string_draw = char_string.copy()
+        char_string_draw.append("_")
+
         # Drawing user entered text
         x_ind = 4
-        start_len = 0 if len(char_string) < 15 else len(char_string) - 15
-        end_index = len(char_string) - start_len
+        start_len = 0 if len(char_string_draw) < 20 else len(char_string_draw) - 20
+        end_index = len(char_string_draw) - start_len
         i = 0
 
-        for char in char_string[start_len:]:
-            # TODO: Convert to drawing 5x7
+        for char in char_string_draw[start_len:]:
             if not hide_text:
-                dev.DISPLAY.draw_text8x8(x_ind, 2, char)
+                dev.DISPLAY.draw_text(x_ind, 2, char, font_5x8)
 
             elif i == end_index - 1:
-                dev.DISPLAY.draw_text8x8(x_ind, 2, char)
+                dev.DISPLAY.draw_text(x_ind, 2, char, font_5x8)
 
             else:
-                dev.DISPLAY.draw_text8x8(x_ind, 2, "*")                
+                dev.DISPLAY.draw_text(x_ind, 2, "*", font_5x8)
             
-            x_ind += 8
+            x_ind += 6
             i += 1
             
         # User string length
-        # TODO: Show this with the 3x5 smaller font
         length_str = f"{len(char_string)}/{max_chars}"
-        dev.DISPLAY.draw_text8x8(126 - (len(length_str) * 8), 13, length_str)
+        dev.DISPLAY.draw_text(127 - (len(length_str) * 4), 10, length_str, font_3x5)
         dev.DISPLAY.present()
 
 # Convert the character set into a usable form by the osk
@@ -284,45 +329,49 @@ def _compile_charset(charset: list[list[str]], starting_offset: int) \
             ox = 2
             
             # Extra implicit bottom row entries
-            # TODO: Add a top row backspace entry?
-            enter_key = ("->", "RET")
+            backspace_key = ("<-", "BKSP")
+            enter_key = ("ENTER", "RET")
             shift_key = ("AB", "SHFT")
             symbols   = ("&", "SYM")
-
-            # TODO: BACKSPACE ENTRY
             
             # Shift key entry.
-            gen_char_dict[(x, y)] = [shift_key[0], shift_key[1], (ox, oy, (len(shift_key[0]) * 8), 8)]
+            gen_char_dict[(x, y)] = [shift_key[0], shift_key[1], (ox, oy, (len(shift_key[0]) * _OSK_OUTLINE_WIDTH), 8)]
             
             # Symbols key entry.
             x += 1
-            ox += len(shift_key[0] * 8) + 8
-            gen_char_dict[(x, y)] = [symbols[0], symbols[1], (ox, oy, (len(symbols[0]) * 8), 8)]
+            ox += len(shift_key[0] * 8) + 4
+            gen_char_dict[(x, y)] = [symbols[0], symbols[1], (ox, oy, (len(symbols[0]) * _OSK_OUTLINE_WIDTH), 8)]
             
             # Space bar entry.
             x += 1
             ox = starting_location
-            gen_char_dict[(x, y)] = [space_row[0], space_row[1], (ox, oy, (len(space_row[0]) * 8), 8)]
+            gen_char_dict[(x, y)] = [space_row[0], space_row[1], (ox, oy, (len(space_row[0]) * _OSK_OUTLINE_WIDTH), 8)]
             
             # Enter key entry.
             x += 1
+            ox = 94
+            gen_char_dict[(x, y)] = [enter_key[0], enter_key[1], (ox, oy, (len(enter_key[0]) * _OSK_OUTLINE_WIDTH), 8)]
+
+            # Backspace key entry.
+            x = len(charset[0]) - 1
+            y = 0
             ox = 110
-            gen_char_dict[(x, y)] = [enter_key[0], enter_key[1], (ox, oy, (len(enter_key[0]) * 8), 8)]
+            oy = starting_offset
+            gen_char_dict[(x, y)] = [backspace_key[0], backspace_key[1], (ox, oy, (len(backspace_key[0]) * _OSK_OUTLINE_WIDTH), 8)]
         else:
             x = 0
             ox = starting_location
             for char in row:
-                gen_char_dict[(x, y)] = [char, char, (ox, oy, (len(char) * 8), 8)]
+                gen_char_dict[(x, y)] = [char, char, (ox, oy, (len(char) * _OSK_OUTLINE_WIDTH), 8)]
                 
                 x += 1
                 ox += 8
         
         y += 1
-        oy += 8
+        oy += 9
         
     # Compilation done      
     return gen_char_dict
-
 
 # Prompt the user for a yes/no answer.
 # Prompt provided must be in list format.
@@ -331,7 +380,7 @@ def prompt_yn(label: str, prompt: list[str]) -> bool:
     if len(prompt) > 4:
         raise ValueError("Prompt message box longer than 4 lines.")
     
-    font_5x7 = xglcd_font.XglcdFont(_OSK_5x7_FONT_PATH, 5, 7)
+    font_5x7 = xglcd_font.XglcdFont(_OSK_5x8_FONT_PATH, 5, 8)
     font_h = font_5x7.height + 1
     font_w = font_5x7.width + 1
     
@@ -372,12 +421,12 @@ def prompt_yn(label: str, prompt: list[str]) -> bool:
         draw_color = 0 if item_selected else 1
         
         if item_selected:
-            dev.DISPLAY.fill_rectangle(0, 48, 127, 8, 1)
+            dev.DISPLAY.fill_rectangle(0, 48, 127, 8)
         elif not item_selected:
-            dev.DISPLAY.fill_rectangle(0, 56, 127, 8, 1)
+            dev.DISPLAY.fill_rectangle(0, 56, 127, 8)
 
-        dev.DISPLAY.draw_text(52, 48, "Yes", font_5x7, draw_color)
-        dev.DISPLAY.draw_text(56, 56, "No", font_5x7, 1 - draw_color)
+        dev.DISPLAY.draw_text(56, 48, "Yes", font_5x7, draw_color)
+        dev.DISPLAY.draw_text(59, 56, "No", font_5x7, 1 - draw_color)
         
         dev.DISPLAY.present()
 
@@ -388,7 +437,7 @@ def prompt_ok(label: str, prompt: list[str]) -> bool:
     if len(prompt) > 4:
         raise ValueError("Prompt message box longer than 4 lines.")
     
-    font_5x7 = xglcd_font.XglcdFont(_OSK_5x7_FONT_PATH, 5, 7)
+    font_5x7 = xglcd_font.XglcdFont(_OSK_5x8_FONT_PATH, 5, 8)
     font_h = font_5x7.height + 1
     font_w = font_5x7.width + 1
     
@@ -413,8 +462,8 @@ def prompt_ok(label: str, prompt: list[str]) -> bool:
             dev.DISPLAY.draw_text(0, y, line, font_5x7)
             y += font_h
         
-        dev.DISPLAY.fill_rectangle(0, 56, 127, 8, 1)
-        dev.DISPLAY.draw_text(48, 56, "Okay", font_5x7, 0)
+        dev.DISPLAY.fill_rectangle(0, 56, 127, 8)
+        dev.DISPLAY.draw_text(52, 56, "Okay", font_5x7, 0)
         dev.DISPLAY.present()
 
 def _remap(x: int, in_min: int, in_max: int, out_min: int, out_max: int) -> int:
@@ -422,4 +471,4 @@ def _remap(x: int, in_min: int, in_max: int, out_min: int, out_max: int) -> int:
     Take a value x within the range [in_min, in_max] and remap it to
     the output range [out_min, out_max] (rounded).
     """
-    return (x - in_min) * round((out_max - out_min) / (in_max - in_min)) + out_min
+    return max(out_min, min(out_max, (x - in_min) * round((out_max - out_min) / (in_max - in_min)) + out_min))

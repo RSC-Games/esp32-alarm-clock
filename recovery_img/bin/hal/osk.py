@@ -418,4 +418,4 @@ def _remap(x: int, in_min: int, in_max: int, out_min: int, out_max: int) -> int:
     Take a value x within the range [in_min, in_max] and remap it to
     the output range [out_min, out_max] (rounded).
     """
-    return (x - in_min) * round((out_max - out_min) / (in_max - in_min)) + out_min
+    return max(out_min, min(out_max, (x - in_min) * round((out_max - out_min) / (in_max - in_min)) + out_min))
