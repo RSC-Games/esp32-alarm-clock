@@ -8,7 +8,7 @@ def main(firm_name: str):
     output.print_tool("attempting to open device...")
 
     try:
-        rcm = uart_rcm.open_device("/dev/ttyUSB1")
+        rcm = uart_rcm.open_device("/dev/ttyUSB0")
 
         t_start_ms = time.monotonic_ns() / 1_000_000
         uart_rcm.boot_payload(rcm, "../gen_imager.mpy")

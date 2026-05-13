@@ -1,5 +1,5 @@
+from machine import DAC, SDCard, Pin
 from esp32 import Partition
-from machine import DAC
 import micropython
 import time
 import vfs
@@ -34,6 +34,38 @@ def test_alarm_noise(level: int, interval: int, duration: int, cycles: int):
 
 # ALARM NOISE: test_alarm_noise(255, 333, 50000, 5)
 
+_SD_BUS_SLOT = const(3)
+_SD_BUS_FREQ = const(20_000_000)
+_SD_BUS_SCK = const(14)
+_SD_BUS_MISO = const(12)
+_SD_BUS_MOSI = const(13)
+_SD_BUS_CS = const(15)
+
+def mount_sd(mount_pt: str) -> bool:
+    sd = None
+
+    try:
+        sd = SDCard(
+            slot=_SD_BUS_SLOT,
+            freq=_SD_BUS_FREQ,
+            sck=Pin(_SD_BUS_SCK, Pin.OUT),
+            miso=Pin(_SD_BUS_MISO, Pin.OUT), 
+            mosi=Pin(_SD_BUS_MOSI, Pin.OUT), 
+            cs=Pin(_SD_BUS_CS, Pin.OUT)
+        )
+    except OSError:
+        print("sd card unreadable/not present")
+        return False
+
+    try:
+        vfs.mount(sd, mount_pt)
+    except OSError:
+        print("sd card unmountable/corrupt")
+        return False
+
+    return True
+
+
 def firm_entry(pubkey, nvs):
     print("have code exec post firm_entry")
 
@@ -56,7 +88,6 @@ def firm_entry(pubkey, nvs):
     print(f"current root {os.listdir()}")
 
     # mount flash for more debugging
-    # NOR boot mode
     print("attempting nor flash mount")
 
     data_partitions = Partition.find(Partition.TYPE_DATA, label="vfs")
@@ -71,6 +102,9 @@ def firm_entry(pubkey, nvs):
         print("data partition corrupt/unmountable")
 
     # NOR mount done
+
+    if mount_sd("/sd"):
+        print("sd mounted")
 
     print("done testing; entering fake repl")
 

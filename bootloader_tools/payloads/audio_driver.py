@@ -1,0 +1,16 @@
+# SYMBOLS:	ADDR	WORD	NAME
+# 			0x0000 	0x0000 	entry
+# 			0x005c 	0x0017 	active_array
+# 			0x0060 	0x0018 	sample_index
+# 			0x0064 	0x0019 	rtc_dumped_sample
+# 			0x0068 	0x001a 	sample_array0
+# 			0x0a68 	0x029a 	sample_array1
+ULP_BASE = const(0x50000000)
+ULP_ENTRY = const(0x0000)
+ULP_ACTIVE_ARRAY = const(0x005c)
+ULP_SAMPLE_INDEX = const(0x0060)
+ULP_RTC_DUMPED_SAMPLE = const(0x0064)
+ULP_SAMPLE_ARRAY0 = const(0x0068)
+ULP_SAMPLE_ARRAY1 = const(0x0a68)
+
+ulp_img = b'ulp\x00\x0c\x00\\\x00\x0c\x00\x00\x14\x80\x01\x80r\x03\x00\x00\xd0\x0e\x80 r<\x00@\x80\x1f\x00\x00r\x03\x00\x00hp\x01\x80r\x02\x00\x00\xd0\x9a\x00\xa0r\xa0\x01\x80r\n\x00\x00p+\x00\x80p\x90\x01\x80r\x03\x00\x00h\x00\x00\x00\xb0\x03\x00\x80r\x03\x00\x00hp\x01\x80r\x02\x00\x00\xd0\x1a\x00\x00r\x1a\x00@r\x02\x00\x00h \x00\x00\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
