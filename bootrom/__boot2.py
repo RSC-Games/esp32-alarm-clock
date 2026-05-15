@@ -94,7 +94,7 @@ _SD_BUS_CS = micropython.const(15)
 
 # Wrapper. Runs a mandatory GC run to reduce fragmentation.
 #
-# TODO: Only for debugging bootrom memory usage.
+# XXX: Only for debugging bootrom memory usage.
 def gc_clean(func):
     def func_wrap(*args):
         mem_start = gc.mem_alloc()
@@ -103,7 +103,9 @@ def gc_clean(func):
         gc.collect()
         gc.collect()
         mem_after = gc.mem_alloc()
-        logs.print_info("boot", f"Function started with {mem_start} B alloc, ended with {mem_func} B, cleaned {mem_after} B. GC freed {mem_func - mem_after} B")
+
+        func_name = str(func).split(" ")[1]
+        logs.print_info("boot.gc", f"{func_name} start {mem_start} B, end {mem_func} B, post-gc {mem_after} B. gc freed {mem_func - mem_after} B")
         return ret
     return func_wrap
 
@@ -212,12 +214,13 @@ def _boot_clean_syspath() -> None:
 @gc_clean
 def _boot_load_nvs(pubkey: RSA) -> ReadOnlyNVS:
     from machine import unique_id
-    from binascii import hexlify
+    from binascii import b2a_base64
 
-    # Mask off the first 7 bytes (nvs names are limited to 15 bytes)
-    nvs_uid = pubkey.n ^ int.from_bytes(unique_id(), "little") & 0x00FFFFFFFFFFFFFF
-    nvs_name = b"k" + hexlify(int.to_bytes(nvs_uid, 7, "little"))
+    # Mask off the first 10 bytes (nvs names are limited to 15 bytes)
+    nvs_uid = pubkey.n ^ int.from_bytes(unique_id(), "little") & 0xFFFF_FFFFFFFF_FFFFFFFF
+    nvs_name = b"k" + b2a_base64(int.to_bytes(nvs_uid, 7, "little"))
 
+    # XXX: private info leak
     logs.print_info("boot", f"loading boot nvs {nvs_name}")
     boot_nvs = ReadOnlyNVS(nvs_name.decode())
 
@@ -225,7 +228,7 @@ def _boot_load_nvs(pubkey: RSA) -> ReadOnlyNVS:
         # Test namespace existence by reading the serial (will panic if nonexistent).
         serial = boot_nvs.get_str("serial")
 
-        logs.print_info("boot", f"unit serial is {serial}")
+        logs.print_info("boot", f"unit serial {serial}")
         return boot_nvs
 
     except OSError:
@@ -302,7 +305,6 @@ def _boot_launch_uart_rcm(pubkey: RSA, nvs: ReadOnlyNVS) -> NoReturn:
         data_packet = bytearray(header_sz + payload_sz + 4)
 
         struct.pack_into(_UART_RCM_PACKET.format(payload_sz), data_packet, 0, header, payload, 0)
-        #crc = crc32(data_packet)
         struct.pack_into("<I", data_packet, header_sz + payload_sz, crc32(data_packet))
         return data_packet
     
@@ -374,12 +376,11 @@ def _boot_launch_uart_rcm(pubkey: RSA, nvs: ReadOnlyNVS) -> NoReturn:
         # Should use a switch statement/LUT but ehh
         if packet_cmd == _UART_RCM_CMD_BOOT:  # BOOT_FIRM
             valid = _boot_exec_signed_firm(pubkey, nvs, transport_layer_payload[:512], transport_layer_payload[512:])
+            # Won't ever return if the signature is valid.
 
             if not valid:
                 err_packet = build_packet(_UART_RCM_FLAG_COMMAND_ERROR, b"BAD_SIGNATURE")
                 rcm_pipe_out.write(err_packet)
-
-            # Won't ever return if the signature is valid.
 
         else:
             err_packet = build_packet(_UART_RCM_FLAG_COMMAND_ERROR, f"E_INVAL:{packet_cmd}".encode())
@@ -406,7 +407,7 @@ def _boot_mount_payload_fs(mount_pt: str, f_path: str, bin: memoryview[int]) -> 
 
         def mount(self, readonly: bool, _: bool) -> None:
             if not readonly:
-                raise OSError("ro fs cannot be mounted rw")
+                raise OSError("rw mount on ro fs")
 
         def umount(self) -> None:
             del self.fname
@@ -449,6 +450,8 @@ def _boot_exec_signed_firm(pubkey: RSA, nvs: ReadOnlyNVS, sig: memoryview[int], 
     from hashlib import sha256
     from machine import reset
     from vfs import umount
+
+    logs.print_warning("boot", "BOOTROM DEVELOPMENT MODE: sig checks patched out")
 
     # sig_hash = pubkey.pkcs_verify(sig)
     bin_hash = sha256(bin).digest()
@@ -618,6 +621,7 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, firm_name: str, sd_bo
             logs.print_error("boot", "corrupt/malformed signature")
             return flashes, 2
 
+        # FIXME: Why is the buffer SO MICROSCOPIC
         firm_buffer = memoryview(bytearray(64))
         firm_hasher = sha256()
 
@@ -639,7 +643,7 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, firm_name: str, sd_bo
             sig_hash = pubkey.pkcs_verify(sig)
             calc_hash = firm_hasher.digest()
 
-            # Signature verification done here!!!!!
+            # IMPORTANT: Signature verification done here!!!!!
             hashes_equal = calc_hash == sig_hash
 
             # TODO: DBX is not checked. (error flash 2/3, 4)
@@ -858,7 +862,7 @@ def boot_main() -> None:
         if hasattr(firmboot, "app_main") and callable(firmboot.app_main):
             firmboot.app_main(boot_nvs)
 
-        logs.print_info("boot", "firm returned (SHOULD NOT DO THIS)")
+        logs.print_warning("boot", "firm returned")
 
     except BaseException as ie:
         logs.print_error("boot", "fatal exception encountered; printing backtrace")

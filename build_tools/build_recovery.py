@@ -9,7 +9,7 @@ import os
 MPY_CROSS_PATH = "mpy-cross"#f"{pathlib.Path(__file__).parent}/mpy-cross.exe"
 MPY_CROSS_FLAGS = "-O2"
 RECOVERY_IMAGER_PATH = f"{pathlib.Path(__file__).parent}/payloads/factory_imager_base.py"
-MAX_RECOVERY_IMG_SIZE = int(28*1024)  # 2 kB FREE IN IMAGE (4 sectors)
+MAX_RECOVERY_IMG_SIZE = int(31*1024)  # MAXIMUM is 31kB because of imager overhead.
 
 def _generate_factory_imager(out_img_path: str) -> bool:
     print(" -- generating recovery uart payload")

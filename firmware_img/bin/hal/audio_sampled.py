@@ -39,6 +39,8 @@ class ptr8(int):
 def uint(_: int) -> int:
     ...
 
+# TODO: New audio driver (uses the standard I2S driver and then
+# does register magic to point it at the internal DACs)
 class AudioPlayer:
     def __init__(self):
         pass
@@ -72,7 +74,7 @@ class AudioPlayer:
         self._sample_cycles_delta = _RTC_FAST_CLK_HZ // framerate - _ULP_CLKS_WRITE_DELAY
         self._ulp = ULP()
 
-        self._ulp.load_binary(0, ulp_firmware)
+        self._ulp.load_binary(0, rebuild_ulp_binary())
         print(f"sample dt {self._sample_cycles_delta} cycles {self._sample_cycles_delta // 8} us")
 
         # Zero both buffers (really just DAC writes with a zero argument)
@@ -95,23 +97,23 @@ class AudioPlayer:
         print(f"got recheck interval {repeat_interval}")
 
         # TODO: Sync to buffer refill (and double the resample rate)
-        # BUG: buffer refill doesn't finish in time for sample pump sometimes.
-
         while True:
             buffer_half = int(self._sample_buffer_idx >= self._sample_buffer_split)
             buffer_to_fill = self._sample_buffer_lower if buffer_half == 1 else self._sample_buffer_upper
-            c_idx = self._sample_buffer_idx
 
-            # TODO: may need to double buffer this one too for performance/stuttering
-            # reasons.
             if buffer_half != self._last_sample_half_filled:
                 #t_start = time.ticks_ms()
                 b_read = asyncio.run(self._audio_f.read_into(buffer_to_fill))
-                #print(f"refill @ idx {c_idx}")
                 #t_end = time.ticks_ms()
                 #print(f"buf {buffer_half} refill {time.ticks_diff(t_end, t_start)} ms @ c_idx {c_idx}")
 
-                # TODO: Handle b_read
+                if b_read == 0:
+                    print("got eof; playback done")
+                    self._isr_pump.deinit()
+                    del self._audio_f
+                    kill_ulp()
+                    return
+
                 self._last_sample_half_filled = buffer_half
 
             time.sleep_ms(5)
@@ -136,6 +138,17 @@ def _jit_sample_buf(dest: ptr32, src: ptr8, len: int, delta_cycles: int):
     # Account for this in the final wait instruction.
     dest[rtc_word_len] = (_ULP_INSTR_REG_WR_TEMPLATE | (src[len - 1] << _ULP_INSTR_REG_WR_DATA_OFFSET))
     dest[rtc_word_len + 1] = uint(_ULP_INSTR_WAIT_TEMPLATE) | (delta_cycles - 25)
+
+# Spray ULP coprocessor instruction memory with sleeping gas.
+# Ideal for avoiding irritating noises on crashes/reboots.
+def kill_ulp():
+    self = SINGLETON_AUDIO_PLAYER
+
+    if not hasattr(self, "_ulp"):
+        return # Nothing to worry about
+    
+    _jit_inject_halts(ULP_BASE + ULP_SAMPLE_ARRAY0)  # type: ignore
+    _jit_inject_halts(ULP_BASE + ULP_SAMPLE_ARRAY1)  # type: ignore
 
 @micropython.viper
 def _jit_inject_halts(dest: ptr32):
@@ -199,11 +212,13 @@ def _pump_samples_isr(_: Timer):
 
         # FORCE ULP RESYNC
         _jit_inject_halts(ULP_BASE + array_offset)  # type: ignore
-        _jit_sample_buf(ULP_BASE + array_offset, self._sample_buffer[self._sample_buffer_idx:], _RTC_BUFFER_SLICE_WIDTH, self._sample_cycles_delta) # type: ignore
+        _jit_sample_buf(ULP_BASE + array_offset, self._sample_buffer[self._sample_buffer_idx:],  # type: ignore
+                        _RTC_BUFFER_SLICE_WIDTH, self._sample_cycles_delta)
         self._ulp.run(ULP_BASE + array_offset)
 
     else:
-        _jit_sample_buf(ULP_BASE + array_offset, self._sample_buffer[self._sample_buffer_idx:], _RTC_BUFFER_SLICE_WIDTH, self._sample_cycles_delta) # type: ignore
+        _jit_sample_buf(ULP_BASE + array_offset, self._sample_buffer[self._sample_buffer_idx:],  # type: ignore
+                        _RTC_BUFFER_SLICE_WIDTH, self._sample_cycles_delta)
   
     self._sample_buffer_idx = (self._sample_buffer_idx + _RTC_BUFFER_SLICE_WIDTH) % (self._sample_buffer_size - _RTC_BUFFER_SLICE_WIDTH)
     self._last_ulp_buf_filled = idle_array

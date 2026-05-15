@@ -28,6 +28,7 @@ _IMAGER_PACKET = "<8s{}sI"
 _IMAGER_HEADER_PREFIX = b"\x64RCM"
 _IMAGER_FLAG_READY = 0x80
 _IMAGER_FLAG_ACCEPT = 0x40
+_IMAGER_FLAG_RESPONSE = 0x20
 _IMAGER_FLAG_COMMAND_ERROR = 0x4
 _IMAGER_FLAG_INVALID_PACKET = 0x2
 _IMAGER_FLAG_CORRUPT_PACKET = 0x1
@@ -44,7 +45,7 @@ _IMAGER_CMD_WRITE_FIRM = 3
 _IMAGER_CMD_R2B_UART = 4
 _IMAGER_CMD_R2B_RECOVERY = 5
 _IMAGER_CMD_REBOOT = 6
-
+_IMAGER_CMD_GET_FIRM_HASH = 7
 
 def _establish_connection(uart: serial.Serial) -> bool:
     """
@@ -178,10 +179,30 @@ def device_is_ready(uart: serial.Serial) -> bool:
     
     flags, payload = res
 
-    output.print_tool(f"response: flags {flags} payload {payload}")
+    #output.print_tool(f"response: flags {flags} payload {payload}")
 
     return flags & (_IMAGER_FLAG_READY | _IMAGER_FLAG_ACCEPT) != 0
 
+def device_get_response(uart: serial.Serial) -> bytes:
+    """
+    Get a response payload from the device (if possible).
+    """
+
+    res = _get_datalink_packet(uart)
+
+    if res is None:
+        output.print_tool("response: bad crc")
+        return b""
+    
+    flags, payload = res
+
+    #output.print_tool(f"response: flags {flags} payload {payload}")
+
+    if flags & (_IMAGER_FLAG_READY | _IMAGER_FLAG_RESPONSE) == 0:
+        output.print_tool(f"device error: {payload}")
+        return b""
+
+    return payload 
 
 def upload_firm(uart: serial.Serial, firm_path: str) -> bool:
     firm_sig_path = f"{firm_path}.sig"
@@ -197,7 +218,18 @@ def upload_firm(uart: serial.Serial, firm_path: str) -> bool:
     firm_array[2:2 + 512] = sig_bytes
     firm_array[2 + 512:] = firm_bytes
 
-    output.print_tool(f"uploading firm sha256 {hashlib.sha256(firm_bytes).hexdigest()} len {len(firm_array[2+512:])} B")
+    local_firm_hash = hashlib.sha256(firm_bytes).digest()
+    device_firm_hash = _get_installed_firm_hash(uart)
+
+    if device_firm_hash == b"":
+        output.print_tool("failed to get device hash")
+        return False
+
+    if local_firm_hash == device_firm_hash:
+        output.print_tool("firm already installed; skipping upload")
+        return True
+
+    output.print_tool(f"uploading firm sha256 {local_firm_hash.hex()} len {len(firm_array[2+512:])} B")
 
     packet = _build_datalink_packet(0, firm_array)
     uart.write(packet)
@@ -207,6 +239,20 @@ def upload_firm(uart: serial.Serial, firm_path: str) -> bool:
         return False
     
     return True
+
+def _get_installed_firm_hash(uart: serial.Serial) -> bytes:
+    """
+    Get the hash of the currently installed FIRM. 
+    """
+
+    packet = _build_datalink_packet(0, int.to_bytes(_IMAGER_CMD_GET_FIRM_HASH, 2, "little"))
+    uart.write(packet)
+
+    if not device_is_ready(uart):
+        output.print_tool("cmd write error")
+        return b""
+
+    return device_get_response(uart)
 
 def reboot_to_uart(uart: serial.Serial) -> None:
     output.print_tool("rebooting device to uart boot")
@@ -224,7 +270,7 @@ def reboot_to_recovery(uart: serial.Serial) -> None:
     uart.write(packet)
 
     if not device_is_ready(uart):
-        output.print_tool(f"reboot to recovery.img failed")
+        output.print_tool(f"software reboot to rcm failed")
 
 def reboot(uart: serial.Serial) -> None:
     output.print_tool("rebooting device to main firm.img")
@@ -232,5 +278,8 @@ def reboot(uart: serial.Serial) -> None:
     packet = _build_datalink_packet(0, int.to_bytes(_IMAGER_CMD_REBOOT, 2, "little"))
     uart.write(packet)
 
-    #if not device_is_ready(uart):
-    #    output.print_tool(f"software reboot to firm.img failed")
+    try:
+        if not device_is_ready(uart):
+            output.print_tool(f"software reboot to firm failed")
+    except:
+        pass # don't care if no response.

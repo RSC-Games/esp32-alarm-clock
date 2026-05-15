@@ -387,7 +387,7 @@ class AudioPlayer:
             if buffer_half != self._last_sample_half_filled:
                 #t_start = time.ticks_ms()
                 b_read = asyncio.run(self._audio_f.read_into(buffer_to_fill))
-                print(f"refill @ idx {c_idx}")
+                #print(f"refill @ idx {c_idx}")
                 #t_end = time.ticks_ms()
                 #print(f"buf {buffer_half} refill {time.ticks_diff(t_end, t_start)} ms @ c_idx {c_idx}")
 
@@ -493,8 +493,8 @@ def firm_payload():
 
     # # attempt playing some samples?
     audio_player = SINGLETON_AUDIO_PLAYER
-    audio_player.initialize("/sd/other/The_Yandere's_Puppet_Show.wav", 96)
-    #audio_player.initialize("/sd/other/02 - One Step Closer-slowed.wav", 96)
+    #audio_player.initialize("/sd/other/The_Yandere's_Puppet_Show.wav", 96)
+    audio_player.initialize("/sd/other/khakis-songa.wav", 96)
 
     audio_player.play()
 

@@ -48,16 +48,16 @@ def _fixup_bad_update_secure() -> bool:
     if active_firm_present and active_sig_present:
         # Try to bail out of this one (super unlikely but worth a shot)
         if new_sig_present and new_firm_present:
-            logs.print_info("recovery", "trying local update install")
+            logs.print_info("rcm", "install local firm")
             recovery_utils.install_new_firmware_local()
             return True
 
-        logs.print_warning("recovery", "stg1 fail: installed firm corrupt")
+        logs.print_warning("rcm", "stg1 fail: firm corrupt")
 
     # Case 1 (sig missing) -> FIX: attempt to install local firmware update.
     elif active_firm_present:
         if not new_sig_present or not new_firm_present:
-            logs.print_warning("recovery", "stg1 fail: no active sig/firm present")
+            logs.print_warning("rcm", "stg1 fail: no active sig/firm")
             return False
         
         recovery_utils.install_new_firmware_local()
@@ -76,7 +76,7 @@ def _fixup_bad_update_secure() -> bool:
             return True
         
         # New firmware isn't present and neither is old firmware?
-        logs.print_warning("recovery", "stg1 fail: no firms present")
+        logs.print_warning("rcm", "stg1 fail: no firms")
 
     # Case 2 (nothing's there) -> FIX: attempt to install local firmware update.
     else:
@@ -90,7 +90,7 @@ def _fixup_bad_update_secure() -> bool:
             recovery_utils.install_new_firmware_local(".old")
             return True
         
-        logs.print_warning("recovery", "stg1 fail: no intact firms")
+        logs.print_warning("rcm", "stg1 fail: firms missing")
 
     return False
 
@@ -123,16 +123,16 @@ def _fixup_bad_update() -> bool:
 
     # Case 1/2 code identical -> FIX: firm corrupt; install new copy
     if new_firm_present:
-        logs.print_info("recovery", "trying local update install")
+        logs.print_info("rcm", "install local firm")
         recovery_utils.install_insecure_firmware_local()
         return True
     
     elif old_firm_present:
-        logs.print_info("recovery", "rolling back firm")
+        logs.print_info("rcm", "firm rollback")
         recovery_utils.install_insecure_firmware_local(".old")
         return True
 
-    logs.print_warning("recovery", "stg1 fail: no intact firms")
+    logs.print_warning("rcm", "stg1 fail: missing firms")
     return False
 
 
@@ -151,7 +151,7 @@ def _fixup_bad_update() -> bool:
 # itself is damaged, the device must be reimaged/repaired with a UART recovery
 # payload.
 def app_main(nvs: ReadOnlyNVS):
-    logs.print_warning("recovery", "booted recovery firm")
+    logs.print_warning("rcm", "booted rcm firm")
 
     # firmfs size:
     #f_bsize, _, f_blocks, f_bfree, _, _, _, _, _, _ = os.statvfs("/firm")
@@ -161,16 +161,16 @@ def app_main(nvs: ReadOnlyNVS):
     prod_id = nvs.get_str("prod_id")
 
     if prod_id != "esp32_alarm_clock":
-        logs.print_error("recovery", f"bad prod_id: {prod_id}")
-        raise OSError("EINVAL")
+        logs.print_error("rcm", f"bad prod_id: {prod_id}")
+        raise OSError(22)
     
     # Only two disks should be mounted at this point, and root should be NOR.
     # SD BOOT IS NOT SUPPORTED!
     root = [fs for fs, mount in mount() if mount == "/"][0]
 
     if type(root) != VfsLfs2:
-        logs.print_error("recovery", "sd boot not supported")
-        raise OSError("EINVAL")
+        logs.print_error("rcm", "fail: sd boot")
+        raise OSError(22)
 
     # Perform stage one recovery. Secure boot recovery is significantly more difficult
     # than recovering with signature checks disabled.
@@ -182,7 +182,7 @@ def app_main(nvs: ReadOnlyNVS):
         stage_one_successful = _fixup_bad_update_secure()
 
     if stage_one_successful:
-        logs.print_info("recovery", "NOR backup installed")
+        logs.print_info("rcm", "used nor bk")
         machine.reset()
 
     # Perform stage 2 recovery. To actually develop this will require a lot of time
@@ -200,7 +200,7 @@ def app_main(nvs: ReadOnlyNVS):
         # System exit SHOULD be called in normal operation.
 
     except Exception as ie:
-        logs.print_error("recovery", "fatal exception in firm")
+        logs.print_error("rcm", "firm fatal error")
         FBCON.set_hidden(False)
         FBCON.write_line("f: panic in recovery mode")
         sys.print_exception(ie)
@@ -209,13 +209,13 @@ def app_main(nvs: ReadOnlyNVS):
     except SystemExit as exit:
 
         if exit.value == 0:  # type: ignore
-            logs.print_info("recovery", "installed internet firm")
+            logs.print_info("rcm", "used cdn firm")
             osk.prompt_ok("Recovery", ["Recovery", "successful!", "Reboot?"])
             machine.reset()
     
         FBCON.set_hidden(False)
         FBCON.write_line("w: recovery failed; rebooting")
-        logs.print_error("recovery", "stg2 fail. UART boot req'd")
+        logs.print_error("rcm", "stg2 fail; uart boot req'd")
         time.sleep(5)
 
     machine.reset()

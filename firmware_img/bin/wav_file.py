@@ -43,7 +43,7 @@ class WaveReader:
         self.format = unpack("<H", format_chunk.read(2))[0]
 
         if self.format != _WAVE_FORMAT_PCM:
-            raise ValueError(f"unsupported wave format: {self.format}")
+            raise ValueError(f"bad wave format: {self.format}")
 
         self.num_channels = unpack("<H", format_chunk.read(2))[0]
         self.framerate = unpack("<I", format_chunk.read(4))[0]
@@ -76,20 +76,23 @@ class WaveReader:
         if len(out) == 1:
             return out[0]
 
-        raise ValueError(f"missing chunk of tag {tag}")
+        raise ValueError(f"missing chunk {tag}")
     
     def read(self, num_frames: int) -> bytes:
         return self._data_chunk.read(num_frames * self.frame_width * self.num_channels)
     
     async def read_into(self, buffer: memoryview[int]) -> int:
         if not len(buffer) % (self.frame_width * self.num_channels) == 0:
-            raise IndexError("invalid buffer size")
+            raise IndexError("bad buffer size")
 
         return await self._data_chunk.readinto(buffer)
     
     def seek(self, offset: int) -> None:
         self._data_chunk.seek(offset)
 
+    def __del__(self):
+        self.wav_file.close()
+        del self._data_chunk
 
 class RIFFHeader:
     """
@@ -107,12 +110,12 @@ class RIFFHeader:
         self.in_f.seek(0)
 
         if not in_f.read(4) == b"RIFF":
-            raise ValueError("invalid riff header")
+            raise ValueError("bad riff header")
         
         self.size = int.from_bytes(in_f.read(4), "little")
 
         if not in_f.read(4) == b"WAVE":
-            raise ValueError("not a wave file")
+            raise ValueError("not wav file")
 
         self.data_offset = in_f.tell()
 
@@ -145,9 +148,9 @@ class RIFFChunk:
         chunk_loc = self.in_f.tell() - self.data_offset
 
         # bounds check
-        # TODO: return nothing
-        if chunk_loc + num_bytes > self.size:
-            raise IndexError(f"attempted out of bounds read: {chunk_loc} + {num_bytes} > {self.size}")
+        if chunk_loc + num_bytes >= self.size:
+            num_bytes = self.size - chunk_loc
+            #raise IndexError(f"oob read: {chunk_loc} + {num_bytes} > {self.size}")
         
         return self.in_f.read(num_bytes)
     
@@ -156,9 +159,9 @@ class RIFFChunk:
         buffer_len = len(buffer)
 
         # bounds check
-        # TODO: return nothing
-        if chunk_loc + buffer_len > self.size:
-            raise IndexError(f"attempted out of bounds read: {chunk_loc} + {buffer_len} > {self.size}")
+        if chunk_loc + buffer_len >= self.size:
+            buffer_len = self.size - chunk_loc
+            print(f"overread; truncated buffer len to {buffer_len}")
 
         bytes_read = 0
 

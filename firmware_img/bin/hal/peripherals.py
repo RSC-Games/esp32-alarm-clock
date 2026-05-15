@@ -1,4 +1,4 @@
-from machine import Pin, ADC, DAC, I2C, SDCard
+from machine import Pin, ADC, DAC, I2C, SDCard, freq
 from hal.drivers import wifi, ssd1309
 from micropython import const
 from time import sleep_ms
@@ -10,7 +10,7 @@ _DEBOUNCE_INT_MS = const(90)
 
 # HW PIN DEFS
 _PIN_DIR_UP = const(27)
-_PIN_DIR_LEFT = const(26)
+_PIN_DIR_LEFT = const(21)  # NOTE: CHANGE ON BLUEPRINT
 _PIN_DIR_DOWN = const(33)
 _PIN_DIR_RIGHT = const(32)
 _PIN_CONFIRM = const(23)
@@ -57,7 +57,10 @@ def init():
     Fully initialize all peripheral hardware. Most of the hardware has already been
     partially initialized, but network/display/pwr_sense require a bit more.
     """
-    
+
+    # Kick up the CPU clock (currently powersave not required)
+    freq(240_000_000)
+
     # TODO: Make less ANNOYINGLY NOISY (set vcom_desel/precharge/clock div)
     # see https://www.hpinfotech.ro/SSD1309.pdf
     # TODO: Background thread

@@ -1,6 +1,5 @@
 from internet_recovery import wifi_menu
 from micropython import const, mem_info
-#from esp import osdebug, LOG_INFO
 from hal import peripherals, osk
 from binascii import unhexlify
 from hashlib import sha256
@@ -21,7 +20,7 @@ def get_artifact_urls(latest_release_url: str) -> tuple[tuple[str, str], tuple[s
         raise OSError(f"code {release_data.status_code}")
 
     manifest = release_data.json()
-    logs.print_info("recovery", f"found release \"{manifest["tag_name"]}\"")
+    logs.print_info("rcm", f"rel \"{manifest["tag_name"]}\"")
 
     assets = manifest["assets"]
     del manifest
@@ -33,13 +32,13 @@ def get_artifact_urls(latest_release_url: str) -> tuple[tuple[str, str], tuple[s
         artifact_name = artifact["name"]
 
         if artifact_name in ("clock_firm.img", "clock_firm.img.sig"):
-            logs.print_info("recovery", f"found artifact {artifact_name} url {artifact['browser_download_url']}")
-            logs.print_info("recovery", f"sig {artifact['digest']}")
+            logs.print_info("rcm", f"got {artifact_name} url {artifact['browser_download_url']}")
+            logs.print_info("rcm", f"sig {artifact['digest']}")
             out[artifact_name] = (artifact["browser_download_url"], artifact["digest"])
 
     if len(out) != 2:
-        logs.print_error("recovery", "unable to find firm urls")
-        raise RuntimeError("unable to find firm urls")
+        logs.print_error("rcm", "firm url not found")
+        raise RuntimeError("firm dl fail")
     
     return out["clock_firm.img"], out["clock_firm.img.sig"]
 
@@ -51,8 +50,8 @@ def download_artifact(artifact: tuple[str, str], install_path: str) -> None:
 
     # Micropython really only supports sha256 (or at least hardware accelerated)
     if artifact_sha[0] != "sha256":
-        logs.print_error("recovery", f"bad hash type: {artifact_sha[0]}")
-        raise OSError("EINVAL")
+        logs.print_error("rcm", f"bad type: {artifact_sha[0]}")
+        raise OSError(22) # einval
 
     artifact_sha = unhexlify(artifact_sha[1])
 
@@ -78,12 +77,11 @@ def download_artifact(artifact: tuple[str, str], install_path: str) -> None:
 
     # No SSL certificate is required for HTTPS; avoid installing corrupt files.
     if calc_sha != artifact_sha:
-        logs.print_error("recovery", "artifact hash mismatch")
-        raise OSError("EINVAL")
+        logs.print_error("rcm", "dl hash mismatch")
+        raise OSError(2)
 
     artifact_res.close()
     f.close()
-
 
 # Firm boot does hardware init.
 # RECOVERY STAGES:
@@ -100,7 +98,6 @@ def download_artifact(artifact: tuple[str, str], install_path: str) -> None:
 def main():
     # Boot splash (effectively)
     peripherals.FBCON.write_line("i: getting connection results")
-    #osdebug(LOG_INFO)
 
     peripherals.FBCON.set_hidden(True)
     osk.prompt_ok("RECOVERY", ["Connect to the", "internet to", "repair the", "firmware?"])
@@ -136,11 +133,11 @@ def main():
 
     except (OSError, RuntimeError) as ie:
         peripherals.FBCON.write_line("e: firmware download failure")
-        logs.print_error("recovery", "unable to download firm")
+        logs.print_error("rcm", "dl firm fail")
         sys.print_exception(ie)
         sys.exit(-1)
 
     except MemoryError:
-        logs.print_error("recovery", "oom event")
+        logs.print_error("rcm", "oom")
         mem_info(1)
         sys.exit(-2)

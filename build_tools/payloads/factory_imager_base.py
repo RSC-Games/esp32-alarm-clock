@@ -57,6 +57,7 @@ _IMAGER_PACKET = const("<8s{}sI")
 _IMAGER_HEADER_PREFIX = const(b"\x64RCM")
 _IMAGER_FLAG_READY = const(0x80)
 _IMAGER_FLAG_ACCEPT = const(0x40)
+_IMAGER_FLAG_RESPONSE = const(0x20)
 _IMAGER_FLAG_COMMAND_ERROR = const(0x4)
 _IMAGER_FLAG_INVALID_PACKET = const(0x2)
 _IMAGER_FLAG_CORRUPT_PACKET = const(0x1)
@@ -73,6 +74,9 @@ _IMAGER_CMD_WRITE_FIRM = const(3)
 _IMAGER_CMD_R2B_UART = const(4)
 _IMAGER_CMD_R2B_RECOVERY = const(5)
 _IMAGER_CMD_REBOOT = const(6)
+_IMAGER_CMD_GET_FIRM_HASH = const(7)
+
+_HASH_BUFFER_SZ = const(4096)
 
 
 def mount_internal_fs() -> bool:
@@ -278,20 +282,43 @@ def do_command_parser(nvs: ReadOnlyNVS):
                 f.write(transport_layer_payload[512:])
 
         elif packet_cmd == _IMAGER_CMD_R2B_UART:  # reboot to uart mode
-            time.sleep_ms(10)
+            time.sleep_ms(100)
             reboot_to_uart()
 
         elif packet_cmd == _IMAGER_CMD_R2B_RECOVERY:  # reboot to recovery.img
-            time.sleep_ms(50)
+            time.sleep_ms(100)
             reboot_to_recovery()
 
         elif packet_cmd == _IMAGER_CMD_REBOOT:  # reboot
-            time.sleep_ms(50)
+            time.sleep_ms(100)
             reset()
+
+        elif packet_cmd == _IMAGER_CMD_GET_FIRM_HASH:  # read the current installed firm hash
+            firm_hash = calc_file_hash(f"{nvs.get_str('firm')}.img")
+            res_packet = build_packet(_IMAGER_FLAG_RESPONSE | _IMAGER_FLAG_READY, firm_hash)
+            rcm_pipe_out.write(res_packet)
 
         else:
             err_packet = build_packet(_IMAGER_FLAG_COMMAND_ERROR, f"CMD:{packet_cmd}".encode())
             rcm_pipe_out.write(err_packet)
+
+def calc_file_hash(filename: str) -> bytes:
+    firm_buffer = memoryview(bytearray(_HASH_BUFFER_SZ))
+    firm_hasher = sha256()
+
+    with open(filename, "rb") as f:
+        while True:
+            bytes_read = f.readinto(firm_buffer)
+
+            if bytes_read < len(firm_buffer):
+                firm_hasher.update(firm_buffer[:bytes_read])
+                break
+            else:
+                firm_hasher.update(firm_buffer)
+
+        gc.collect()
+
+    return firm_hasher.digest()
 
 
 # For an alarm clock to boot, it needs to have the following provisioned:

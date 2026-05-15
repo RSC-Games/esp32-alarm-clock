@@ -8,7 +8,7 @@ def main(firm_name: str):
     output.print_tool("attempting to open device...")
 
     try:
-        rcm = uart_rcm.open_device("/dev/ttyUSB0")
+        rcm = uart_rcm.open_device("/dev/ttyUSB1")
 
         t_start_ms = time.monotonic_ns() / 1_000_000
         uart_rcm.boot_payload(rcm, "../gen_imager.mpy")
@@ -25,7 +25,7 @@ def main(firm_name: str):
         upload_success = uart_imager.upload_firm(rcm, firm_name)
         t_end_ms = time.monotonic_ns() / 1_000_000
 
-        output.print_tool(f"firm uploaded; took {(t_end_ms - t_start_ms):.2f} ms")
+        output.print_tool(f"firm loader exited; took {(t_end_ms - t_start_ms):.2f} ms")
 
         if not upload_success:
             output.print_tool("error: upload failed")

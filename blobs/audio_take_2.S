@@ -16,6 +16,8 @@ loop:
 .global sample_array0
     sample_array0: .space 2920 // 2920 entries
 
+.global code_load_addr_1
+code_load_addr_1:
     // Signal the main CPUs to refill the bottom half of the instruction array
     // it's 2920 bytes but we can only fit 365 samples in it...
     move r1, 0 // +6 cycles, array0 half needs refill
@@ -26,6 +28,8 @@ loop:
 .global sample_array1
     sample_array1: .space 2920
 
+.global code_load_addr_2
+code_load_addr_2:
     // Signal the main CPUs to refill the top half of the instruction array
     // it's 2920 bytes but we can only fit 365 samples in it...
     move r1, 1 // +6 Cycles; array1 no longer active

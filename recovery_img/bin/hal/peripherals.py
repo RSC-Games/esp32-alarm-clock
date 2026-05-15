@@ -7,7 +7,7 @@ _DEBOUNCE_INT_MS = const(150)
 
 # HW PIN DEFS
 _PIN_DIR_UP = const(27)
-_PIN_DIR_LEFT = const(26)
+_PIN_DIR_LEFT = const(21)
 _PIN_DIR_DOWN = const(33)
 _PIN_DIR_RIGHT = const(32)
 _PIN_CONFIRM = const(23)
