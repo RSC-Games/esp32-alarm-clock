@@ -177,7 +177,8 @@ class WiFiManager:
         self.wlan = WLAN(WLAN.IF_STA)
         self.scan_results = []
 
-    # TODO: Bring up should run in a separate thread
+    # Bring up can run synchronous because that's not a concern in the
+    # recovery firmware.
     def bring_up(self) -> bool:
         """
         Enable the network and try to connect to any of the registered

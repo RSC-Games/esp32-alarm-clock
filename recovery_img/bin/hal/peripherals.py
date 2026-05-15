@@ -57,12 +57,11 @@ def init():
     partially initialized, but network/display/pwr_sense require a bit more.
     """
     
-    # TODO: Make less ANNOYINGLY NOISY (set vcom_desel/precharge/clock div)
-    # see https://www.hpinfotech.ro/SSD1309.pdf
     NIC.bring_up()
 
     # TODO: start pwr_sense monitoring driver to detect power loss events and prevent
     # the device from wasting CMOS battery energy
+    # NOTE: Running quite low on free code space though
 
     # init done
     DISPLAY.present()

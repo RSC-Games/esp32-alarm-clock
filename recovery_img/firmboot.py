@@ -189,7 +189,6 @@ def app_main(nvs: ReadOnlyNVS):
     # and development effort (and working hardware to test on)
     from hal import peripherals
     from hal.peripherals import FBCON
-    FBCON.write_line("i: booted recovery firm (c) 2026")
     FBCON.write_line("W: ATTEMPTING TO RECOVER DEVICE!")
     peripherals.init()
 
@@ -209,7 +208,6 @@ def app_main(nvs: ReadOnlyNVS):
     except SystemExit as exit:
 
         if exit.value == 0:  # type: ignore
-            logs.print_info("rcm", "used cdn firm")
             osk.prompt_ok("Recovery", ["Recovery", "successful!", "Reboot?"])
             machine.reset()
     

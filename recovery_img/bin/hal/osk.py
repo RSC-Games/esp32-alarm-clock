@@ -196,7 +196,6 @@ def _do_osk_input(subcharsets: list[str], key_set: dict[str, list], max_chars: i
         dev.DISPLAY.clear_buffers()
         
         # Draw the border.
-        # TODO: reshape the border for more efficient space usage.
         dev.DISPLAY.draw_rectangle(0, 0, 127, 63)
         dev.DISPLAY.draw_hline(0, 21, 127)
         
@@ -211,7 +210,6 @@ def _do_osk_input(subcharsets: list[str], key_set: dict[str, list], max_chars: i
                 try:
                     x = 0
                     while True:
-                        # TODO: Draw osk with 5x7 font (rather than the 8x8)
                         char = char_coords_aliases[(x, y)]
                         dev.DISPLAY.draw_text8x8(char[2][0], char[2][1], char[0])
                         x += 1
@@ -248,7 +246,6 @@ def _do_osk_input(subcharsets: list[str], key_set: dict[str, list], max_chars: i
             i += 1
             
         # User string length
-        # TODO: Show this with the 3x5 smaller font
         length_str = f"{len(char_string)}/{max_chars}"
         dev.DISPLAY.draw_text8x8(126 - (len(length_str) * 8), 13, length_str)
         dev.DISPLAY.present()
@@ -284,7 +281,6 @@ def _compile_charset(charset: list[list[str]], starting_offset: int) -> dict[tup
             ox = 2
             
             # Extra implicit bottom row entries
-            # TODO: Add a top row backspace entry?
             enter_key = ("->", "RET")
             shift_key = ("AB", "SHFT")
             symbols   = ("&", "SYM")
@@ -353,9 +349,6 @@ def prompt_yn(label: str, prompt: list[str]) -> bool:
             
         dev.DISPLAY.clear_buffers()
 
-        # TODO: no status bar
-        #run_status_bar()
-        
         # Header
         x_offset = (128 - (len(label) * 8)) // 2
         dev.DISPLAY.draw_text8x8(x_offset, 8, label)
