@@ -141,7 +141,6 @@ def write_recovery_img() -> bool:
 
 
 def do_command_parser(nvs: ReadOnlyNVS):
-    # TODO: Steal from the bootrom command parser (with more commands)    
     from select import poll, POLLIN
     from binascii import crc32
     from io import BytesIO
@@ -227,7 +226,7 @@ def do_command_parser(nvs: ReadOnlyNVS):
             rcm_pipe_out.write(err_packet)
             continue
 
-        # Max payload size is 32 kB to avoid memory allocation issues in the FIRM.
+        # Max payload size is 64 kB to avoid memory allocation issues in the FIRM.
         # TODO: circumvent packet size limits with layer 2 framing
         if size >= 65536:
             err_packet = build_packet(_IMAGER_FLAG_INVALID_PACKET, b"E_TOO_LONG")
@@ -303,8 +302,16 @@ def do_command_parser(nvs: ReadOnlyNVS):
             rcm_pipe_out.write(err_packet)
 
 def calc_file_hash(filename: str) -> bytes:
+    from os import stat
+
     firm_buffer = memoryview(bytearray(_HASH_BUFFER_SZ))
     firm_hasher = sha256()
+
+    # FIX: Crash when file doesn't exist (return empty hash)
+    try:
+        stat(filename)
+    except OSError as ie:
+        return firm_hasher.digest()
 
     with open(filename, "rb") as f:
         while True:
@@ -327,13 +334,11 @@ def calc_file_hash(filename: str) -> bytes:
 # - <app_name>.img/recovery.img must be present and bootable
 #
 # This tool ensures the second two requirements are satisfied.
-# TODO: This tool can also inject <app_name>.img but it must be loaded via
-# another channel (another command processor).
-# TODO: As long as the bootrom NOR/SD bootflow is broken, a stub bootloader must
-# be injected after this to fully boot the device.
+# It can also inject <app_name>.img but it must be uploaded by a different
+# device (ideally with firm_image_tool.py)
 #
 # Due to the size of this payload, it does not perform chainloading and will
-# reset the system so the bootrom bootflow is observed.
+# reset the system so the standard bootrom bootflow is observed.
 #
 # NOTE: To avoid writing another command parser, recovery.img will be injected 
 # as part of this boot stub. However, THAT MEANS IT IS SUBJECT TO THE 32kB MAX
