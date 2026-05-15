@@ -17,8 +17,7 @@ class RSA:
         )
         return int.to_bytes(pow(base, self.d, self.n), self.bytes, "big")
 
-    # TODO: patch pcks asserts (should be replaced with ifs)
-    def pkcs_verify(self, value):
+    def pkcs_verify(self, value) -> bytes:
         if not len(value) == self.bytes:
             raise RuntimeError("invalid signature")
 
@@ -27,10 +26,11 @@ class RSA:
         )
         idx = signed.find(b"\0", 1)
 
+        # FIX: vuln: don't report padding errors; just reject
         if not (idx != -1 and signed[:idx] == b"\x00\x01" + (idx - 2) * b"\xff"):
-            raise RuntimeError("pkcs1 signature not properly formatted")
+            return b""
 
-        return signed[idx + 1 :]
+        return signed[idx + 1:]
 
     def pkcs_encrypt(self, value):
         len_padding = self.bytes - 3 - len(value)

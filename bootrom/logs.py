@@ -11,7 +11,6 @@ _LOG_WARNING = const(1)
 _LOG_INFO = const(0)
 _LOG_LEVEL = const(_LOG_INFO)
 
-# TODO: Should add a log to file element (for firmwares, not bootrom)
 def print_info(unit: str, msg: str) -> None:
     if _LOG_LEVEL <= _LOG_INFO:
         print(f"{_COLOR_GREEN}I ({ticks_ms()}) {unit}: {msg}{_COLOR_RESET}")

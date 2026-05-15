@@ -9,10 +9,6 @@
 # NVS lockout isn't fully hardened and would require modification to the mpy
 # NVS driver (to prevent accessing the app NVS) to fully lock down.
 
-# TODO: BOOTROM UPDATES:
-# - Remove unwanted built-ins like mip (but keep requests)
-# - Update __nvs_perms (bug fix pending bootrom update)
-
 # NOTE: performing initial lockout (can be disabled in the mpy firmware). Idea
 # is to prevent circumventing the secure boot chain with a keyboard interrupt.
 import micropython
@@ -105,7 +101,9 @@ def gc_clean(func):
         mem_after = gc.mem_alloc()
 
         func_name = str(func).split(" ")[1]
-        logs.print_info("boot.gc", f"{func_name} start {mem_start} B, end {mem_func} B, post-gc {mem_after} B. gc freed {mem_func - mem_after} B")
+        logs.print_info("boot.gc", f"{func_name} start {mem_start} B, end {mem_func} B, post-gc {mem_after} B")
+        logs.print_info("boot.gc", f"gc freed {mem_func - mem_after} B, leaked {mem_after - mem_start} B")
+        
         return ret
     return func_wrap
 
@@ -219,9 +217,6 @@ def _boot_load_nvs(pubkey: RSA) -> ReadOnlyNVS:
     # Mask off the first 10 bytes (nvs names are limited to 15 bytes)
     nvs_uid = pubkey.n ^ int.from_bytes(unique_id(), "little") & 0xFFFF_FFFFFFFF_FFFFFFFF
     nvs_name = b"k" + b2a_base64(int.to_bytes(nvs_uid, 7, "little"))
-
-    # XXX: private info leak
-    logs.print_info("boot", f"loading boot nvs {nvs_name}")
     boot_nvs = ReadOnlyNVS(nvs_name.decode())
 
     try:
@@ -457,6 +452,7 @@ def _boot_exec_signed_firm(pubkey: RSA, nvs: ReadOnlyNVS, sig: memoryview[int], 
     bin_hash = sha256(bin).digest()
 
     # # Invalid binary; refuse to boot it.
+    # TODO: probably vulnerable to timing side channel
     # if bin_hash != sig_hash:
     #     return False
 
@@ -644,6 +640,7 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, firm_name: str, sd_bo
             calc_hash = firm_hasher.digest()
 
             # IMPORTANT: Signature verification done here!!!!!
+            # TODO: probably vulnerable to timing side channel
             hashes_equal = calc_hash == sig_hash
 
             # TODO: DBX is not checked. (error flash 2/3, 4)

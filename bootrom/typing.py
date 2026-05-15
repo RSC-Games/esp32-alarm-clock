@@ -2,10 +2,13 @@
 # actually work)
 
 class NoReturn:
-    pass
+    ...
 
 class Any:
-    pass
+    ...
 
 class Callable:
-    pass
+    ...
+
+class TypeAlias:
+    ...
