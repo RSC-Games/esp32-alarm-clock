@@ -21,19 +21,23 @@ def main(firm_name: str):
             output.print_tool("error: unable to connect to device")
             return
         
-        t_start_ms = time.monotonic_ns() / 1_000_000
-        upload_success = uart_imager.upload_firm(rcm, firm_name)
-        t_end_ms = time.monotonic_ns() / 1_000_000
+        try:
+            t_start_ms = time.monotonic_ns() / 1_000_000
+            upload_success = uart_imager.upload_firm(rcm, firm_name)
+            t_end_ms = time.monotonic_ns() / 1_000_000
 
-        output.print_tool(f"firm loader exited; took {(t_end_ms - t_start_ms):.2f} ms")
+            output.print_tool(f"firm loader exited; took {(t_end_ms - t_start_ms):.2f} ms")
 
-        if not upload_success:
-            output.print_tool("error: upload failed")
+            if not upload_success:
+                output.print_tool("error: upload failed")
+                uart_rcm.run_user_connection_tool(rcm)
+                return
+            
+            uart_imager.reboot(rcm)
             uart_rcm.run_user_connection_tool(rcm)
-            return
-        
-        uart_imager.reboot(rcm)
-        uart_rcm.run_user_connection_tool(rcm)
+
+        except ValueError:
+            uart_rcm.run_user_connection_tool(rcm)
 
     except OSError as ie:
         traceback.print_exception(ie)

@@ -7,6 +7,9 @@ import logs
 import sys
 import gc
 
+# NOTE: WORKAROUND NOR BOOT IS FROM A TIME WHEN THE BOOTROM BOOTLOADER WAS NOT FUNCTIONAL!
+# NOT RECOMMENDED FOR PRODUCTION AND WILL BE SIGNIFICANTLY BEHIND THE BOOTROM IN FEATURE
+# SUPPORT!!!!
 #################################### CONFIGURATION ######################################
 
 # Enforce signature checks permanently. Set this if using the secure bootloader
@@ -234,7 +237,7 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, firm_name: str, sd_bo
             # Signature verification done here!!!!!
             hashes_equal = calc_hash == sig_hash
 
-            # TODO: DBX is not checked. (error flash 2/3, 4)
+            # DBX is not checked. (error flash 2/3, 4)
         except:
             logs.print_error("firm", "invalid pkcs#1 signature")
             return flashes, 2
@@ -346,7 +349,6 @@ def _boot_lockout(nvs: ReadOnlyNVS, nvs_lockout=True) -> None:
 # - Boot lockout (erase pointers, clear up everything dangerous)
 # - Execute firmboot.bin (does not return)
 #
-# TODO: Better manage bootloader memory (to reduce fragmentation)
 # NOTE: Pointer erased at boot lockout.
 def firm_entry(pubkey: RSA, boot_nvs: ReadOnlyNVS) -> None:
     from machine import Pin
@@ -389,8 +391,6 @@ def firm_entry(pubkey: RSA, boot_nvs: ReadOnlyNVS) -> None:
         sys.path.remove("/initrd")
         gc.collect()
 
-        # TODO: sys.modules purge?
-
         # Payload must have a function (app_main) taking the nvs as an argument
         # (mostly for static type analysis reasons). This should never return.
         if hasattr(firmboot, "app_main") and callable(firmboot.app_main):
@@ -403,5 +403,3 @@ def firm_entry(pubkey: RSA, boot_nvs: ReadOnlyNVS) -> None:
     finally:
         # Application error (should never return)
         _fatal_error_led(pubkey, boot_nvs, 5, 1, reboot=True)
-
-    # TODO: Missing recovery.img boot

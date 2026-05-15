@@ -1,6 +1,5 @@
 from . import output
 
-import threading
 import binascii
 import hashlib
 import struct
@@ -9,7 +8,7 @@ import time
 
 # Device imager protocol (data link layer). Mostly reused from bootrom
 _IMAGER_CONN_RETRIES = 10
-_IMAGER_CONN_MAX_BYTES_TO_TIMEOUT = 512
+_IMAGER_CONN_MAX_BYTES_TO_TIMEOUT = 1024
 _IMAGER_BANNER = b"\x55IMAGER_COMM_DEV\xAA"
 _IMAGER_CONN_ESTABLISHED = b"\xAAIMAGER_COMM_PC\x55"
 
@@ -119,7 +118,7 @@ def _get_datalink_packet(uart: serial.Serial) -> tuple[int, bytes] | None:
     # NOTE: This will spam packets to the host until the payload is fully transferred
     # unless transmission is cut off early.
     if header_magic != _IMAGER_HEADER_PREFIX:
-        raise OSError(f"got illegal header magic {header_magic}")
+        raise ValueError(f"got illegal header magic {header_magic}")
 
     # NOTE: Flags are a DONT CARE (ignore them)
     # Read the rest of the packet payload.
@@ -229,6 +228,7 @@ def upload_firm(uart: serial.Serial, firm_path: str) -> bool:
         output.print_tool("firm already installed; skipping upload")
         return True
 
+    output.print_tool(f"device installed firm sha256 {device_firm_hash.hex()}")
     output.print_tool(f"uploading firm sha256 {local_firm_hash.hex()} len {len(firm_array[2+512:])} B")
 
     packet = _build_datalink_packet(0, firm_array)

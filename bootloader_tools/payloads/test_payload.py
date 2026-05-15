@@ -123,7 +123,6 @@ class WaveReader:
 
         raise ValueError(f"missing chunk of tag {tag}")
     
-    # TODO: Add support for multi_byte frames
     def read(self, num_frames: int) -> bytes:
         return self._data_chunk.read(num_frames * self.frame_width * self.num_channels)
     
@@ -191,7 +190,7 @@ class RIFFChunk:
         chunk_loc = self.in_f.tell() - self.data_offset
 
         # bounds check
-        # TODO: return nothing
+        # code fixed in firm
         if chunk_loc + num_bytes > self.size:
             raise IndexError(f"attempted out of bounds read: {chunk_loc} + {num_bytes} > {self.size}")
         
@@ -202,7 +201,6 @@ class RIFFChunk:
         buffer_len = len(buffer)
 
         # bounds check
-        # TODO: return nothing
         if chunk_loc + buffer_len > self.size:
             raise IndexError(f"attempted out of bounds read: {chunk_loc} + {buffer_len} > {self.size}")
 
@@ -285,8 +283,7 @@ class ptr8(int):
 def uint(_: int) -> int:
     ...
 
-# TODO: Volume support
-# TODO: Calculate wait time between cycles.
+# see clock_firm for fixed code
 @micropython.viper
 def jit_sample_buf(dest: ptr32, src: ptr8, len: int, delta_cycles: int):
     rtc_word_len = (len - 1) * 2
@@ -326,7 +323,6 @@ class AudioPlayer:
     def initialize(self, wave_file: str, ram_buffer_mult: int):
         self._audio_f = WaveReader(wave_file)
 
-        # TODO: Resample channels if unsupported.
         channels = self._audio_f.num_channels
         sample_sz = self._audio_f.frame_width
         framerate = self._audio_f.framerate
@@ -337,7 +333,6 @@ class AudioPlayer:
 
         print(f"channels {channels} sample_sz {sample_sz}B/s framerate {framerate} frame_cnt {frame_cnt}")
 
-        # TODO: VOLUME ADJUST NOT YET SUPPORTED
         self._vol_recip = 1
         self._ulp_buffer_mult = ram_buffer_mult
         self._sample_buffer_size = self._ulp_buffer_mult * _RTC_BUFFER_SLICE_WIDTH
@@ -366,7 +361,6 @@ class AudioPlayer:
 
         self._isr_pump = Timer(0)
         
-        # TODO: Adjust to new sample rates.
         self._read_thread = _thread.start_new_thread(self._buffer_fill_thread, (1 / round(242 / self._ulp_buffer_mult),))
         self._isr_pump.init(mode=Timer.PERIODIC, freq=250, callback=_pump_samples_isr)
         self._ulp.run(ULP_ENTRY)
@@ -374,16 +368,11 @@ class AudioPlayer:
     def _buffer_fill_thread(self, repeat_interval: int):
         print(f"got recheck interval {repeat_interval}")
 
-        # TODO: Sync to buffer refill (and double the resample rate)
-        # BUG: buffer refill doesn't finish in time for sample pump sometimes.
-
         while True:
             buffer_half = int(self._sample_buffer_idx >= self._sample_buffer_split)
             buffer_to_fill = self._sample_buffer_lower if buffer_half == 1 else self._sample_buffer_upper
             c_idx = self._sample_buffer_idx
 
-            # TODO: may need to double buffer this one too for performance/stuttering
-            # reasons.
             if buffer_half != self._last_sample_half_filled:
                 #t_start = time.ticks_ms()
                 b_read = asyncio.run(self._audio_f.read_into(buffer_to_fill))
@@ -391,7 +380,6 @@ class AudioPlayer:
                 #t_end = time.ticks_ms()
                 #print(f"buf {buffer_half} refill {time.ticks_diff(t_end, t_start)} ms @ c_idx {c_idx}")
 
-                # TODO: Handle b_read
                 self._last_sample_half_filled = buffer_half
 
             time.sleep_ms(5)#round(repeat_interval * 500))
@@ -432,7 +420,6 @@ def _pump_samples_isr(_: Timer):
     
     self._last_ulp_buf = idle_array
 
-    # TODO: recover from missed deadline.
     if dt_ms > 8:
         print(f"\033[33mDEADLINE MISSED: dt_call {dt_ms}/8 ms\033[0m")
     #elif dt_ms == 8:
@@ -447,8 +434,6 @@ def _pump_samples_isr(_: Timer):
     if idle_array != test_new_idle:
         # RESYNC 
 
-        # TODO: Inject halts along the newly swapped in buffer and resync?
-        # Would need to resume execution at the refilled buffer address.
         print(f"\033[31mBUFFER SWAP OCCURRED DURING LOAD!!! {idle_array} -> {test_new_idle}\033[0m")
         print(f"force resync to {test_new_idle} (writing {idle_array})")
 
