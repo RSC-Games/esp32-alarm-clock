@@ -2,6 +2,9 @@ import mkfsimg
 import shutil
 import os
 
+_BLOCK_SIZE = 512
+_BLOCKS_RESERVED = 2
+
 def create_build_dir(in_tree: str, build_tree: str):
     if os.path.exists(build_tree):
         print(" -- build tree exists; removing")
@@ -72,6 +75,37 @@ def trim_fonts(build_tree: str) -> bool:
     os.chdir(env_path) 
     return True
 
+# TODO: CLI flag to show image sizes
 def make_bootable_image(out_img: str, build_tree: str, max_size: int) -> bool:
     print(" -- building firm filesystem")
-    return mkfsimg.create_fs_img_recovery(build_tree, out_img, max_size)
+    res = mkfsimg.create_fs_img(build_tree, out_img, max_size)
+
+    do_fs_space_analysis(build_tree, max_size, True)#not res)
+
+    return res
+
+
+def do_fs_space_analysis(build_tree: str, max_size: int, show_file_sizes: bool) -> None:
+    img_sz_total = _BLOCKS_RESERVED * _BLOCK_SIZE  # bytes
+
+    if show_file_sizes:
+        print(" -- image space analysis (by file):")
+
+    for folder, _, files in os.walk(build_tree):
+        img_sz_total += _BLOCK_SIZE
+
+        for file in files:
+            f_size = os.path.getsize(f"{folder}/{file}")
+            blocks, rem = divmod(f_size, _BLOCK_SIZE)
+
+            f_blocks = blocks + min(rem, 1)
+
+            if show_file_sizes:
+                print(f"     - {file}: {f_blocks} blocks; {f_size} B, unused {_BLOCK_SIZE - rem} B")
+
+            img_sz_total += (f_blocks * _BLOCK_SIZE)
+
+    if img_sz_total > max_size:
+        print(f" -- fs size overflow; {img_sz_total} > {max_size}")
+    else:
+        print(f" -- image size: {img_sz_total}/{max_size} B ({(max_size-img_sz_total)/max_size * 100:.2f} % free)")

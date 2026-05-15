@@ -1,8 +1,10 @@
+from machine import Pin, ADC, DAC, I2C, SDCard
 from hal.drivers import wifi, ssd1309
-from machine import Pin, ADC, I2C
 from micropython import const
 from time import sleep_ms
+from vfs import mount
 from hal import fbcon
+import logs
 
 _DEBOUNCE_INT_MS = const(90)
 
@@ -17,6 +19,8 @@ _PIN_SNOOZE = const(5)
 
 _PIN_VSENSE = const(36)
 
+_SD_BUS_SLOT = const(3)
+_SD_BUS_FREQ = const(24_000_000)
 _PIN_SD_MOSI = const(13)
 _PIN_SD_MISO = const(12)
 _PIN_SD_CLK = const(14)
@@ -39,11 +43,9 @@ BTN_SNOOZE = Pin(_PIN_SNOOZE, Pin.IN, Pin.PULL_UP)
 
 POWER_SENSE = ADC(Pin(_PIN_VSENSE, Pin.IN), atten=ADC.ATTN_11DB)
 
-# SD: Unused in recovery firmware (not mounted with NOR boot; SD boot unsupported)
-
 DISPLAY = ssd1309.Display(I2C(_OLED_I2C_BUS_ID, freq=_OLED_I2C_FREQ), flip=True)
 
-# Speaker: Not required in recovery firmware
+SPEAKER = DAC(Pin(_PIN_SPKR_OUT, Pin.OUT))
 
 # Software devices
 NIC = wifi.WiFiManager()
@@ -63,6 +65,33 @@ def init():
 
     # TODO: start pwr_sense monitoring driver to detect power loss events and prevent
     # the device from wasting CMOS battery energy
+
+    if not _mount_sd("/sd"):
+        logs.print_warning("hal", "/sd not created")
+
+def _mount_sd(mount_pt: str) -> bool:
+    sd = None
+
+    try:
+        sd = SDCard(
+            slot=_SD_BUS_SLOT,
+            freq=_SD_BUS_FREQ,
+            sck=Pin(_PIN_SD_CLK, Pin.OUT),
+            miso=Pin(_PIN_SD_MISO, Pin.OUT), 
+            mosi=Pin(_PIN_SD_MOSI, Pin.OUT), 
+            cs=Pin(_PIN_SD_CS, Pin.OUT)
+        )
+    except OSError:
+        logs.print_error("hal", "sd card not present/responding")
+        return False
+
+    try:
+        mount(sd, mount_pt)
+    except OSError:
+        logs.print_error("hal", "sd card unmountable/corrupt")
+        return False
+
+    return True
 
 
 # Return button state if pressed, after waiting on the state to change.

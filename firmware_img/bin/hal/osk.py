@@ -4,6 +4,7 @@
 from hal import peripherals as dev
 from micropython import const
 import xglcd_font
+import time
 
 _OSK_WIDTH = const(112)
 _OSK_CHARSET_PX_OFFSET = const(18)
@@ -290,6 +291,7 @@ def _do_osk_input(keymaps: list[str], key_set: dict[str, list], max_chars: int, 
         length_str = f"{len(char_string)}/{max_chars}"
         dev.DISPLAY.draw_text(127 - (len(length_str) * 4), 10, length_str, font_3x5)
         dev.DISPLAY.present()
+        time.sleep_ms(8) # yield
 
 # Convert the character set into a usable form by the osk
 def _compile_charset(charset: list[list[str]], starting_offset: int) \
@@ -429,6 +431,7 @@ def prompt_yn(label: str, prompt: list[str]) -> bool:
         dev.DISPLAY.draw_text(59, 56, "No", font_5x7, 1 - draw_color)
         
         dev.DISPLAY.present()
+        time.sleep_ms(8)
 
 # Prompt the user.
 # Prompt provided must be in list format.
@@ -465,6 +468,7 @@ def prompt_ok(label: str, prompt: list[str]) -> bool:
         dev.DISPLAY.fill_rectangle(0, 56, 127, 8)
         dev.DISPLAY.draw_text(52, 56, "Okay", font_5x7, 0)
         dev.DISPLAY.present()
+        time.sleep_ms(8)
 
 def _remap(x: int, in_min: int, in_max: int, out_min: int, out_max: int) -> int:
     """

@@ -21,7 +21,6 @@ loop:
     move r1, 0 // +6 cycles, array0 half needs refill
     st r1, r3, 0  // +8 Cycles
     wait 5 // +11 Cycles
-    //jump loop
     // Total: 25 cycles latency
 
 .global sample_array1
@@ -33,4 +32,5 @@ loop:
     st r1, r3, 0  // + 8 Cycles
     wait 1 // +7 cycles
     jump loop  // +4 Cycles
+
     // Total: 25 cycles latency

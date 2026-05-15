@@ -33,12 +33,12 @@ import main
 #       - Licenses -> (Show licensing info for MicroPython, ucrypto, display driver, xglcd)
 def app_main(nvs: ReadOnlyNVS):
     try:
-        # firmfs size:
-        f_bsize, _, f_blocks, f_bfree, _, _, _, _, _, _ = os.statvfs("/firm")
-        print(f"firmfs free/size: {f_bsize * f_bfree}/{f_bsize * f_blocks} B")
+        # firmfs size (no longer required bc of build tool updates):
+        #f_bsize, _, f_blocks, f_bfree, _, _, _, _, _, _ = os.statvfs("/firm")
+        #print(f"firmfs free/size: {f_bsize * f_bfree}/{f_bsize * f_blocks} B")
 
         with open("/firm/version") as f:
-            logs.print_info("app", f"got version {f.read().strip()}")
+            logs.print_info("app", f"app version {f.read().strip()}")
 
         peripherals.init()
 

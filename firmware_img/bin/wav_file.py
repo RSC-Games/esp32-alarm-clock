@@ -3,8 +3,8 @@ import asyncio
 
 _WAVE_FORMAT_PCM = const(0x0001)
 _CHK_MAX_READ = const(1024)
-_CHK_WAIT = const(1)
 
+# TODO: docstring
 class WaveReader:
     """
     RIFF format
@@ -78,7 +78,6 @@ class WaveReader:
 
         raise ValueError(f"missing chunk of tag {tag}")
     
-    # TODO: Add support for multi_byte frames
     def read(self, num_frames: int) -> bytes:
         return self._data_chunk.read(num_frames * self.frame_width * self.num_channels)
     

@@ -1,0 +1,212 @@
+from hal.drivers.blob_ulp_sampled import *
+from machine import Timer, mem8
+from esp32 import ULP
+import micropython
+import wav_file
+import _thread
+import asyncio
+import time
+
+# TODO: docstring
+_DEF_RAM_BUFFER_MULT = const(96)
+_RTC_BUFFER_SIZE = const(2920)
+_RTC_BUFFER_SLICE_WIDTH = const(_RTC_BUFFER_SIZE // 8)
+_RTC_FAST_CLK_HZ = const(8_075_000)  # RTC_FAST is 8 MHz on ESP32??? Will need calibration....
+#_RTCCNTL_REG_BASE = const(0x3ff48000)
+#_RTC_RTCIO_GPIO_BASE = const(0x3ff48400)
+_RTCIO_PAD_DAC1_REG = const(0x484)
+
+_ULP_INSTR_REG_WR_TEMPLATE = const(0x1 << 28 | 26 << 23 | 19 << 18 | _RTCIO_PAD_DAC1_REG // 4)
+_ULP_INSTR_REG_WR_DATA_OFFSET = const(10) 
+_ULP_INSTR_WAIT_TEMPLATE = const(4 << 28)
+_ULP_CLKS_WRITE_DELAY = const(14)  # 8 cycles reg_wr + 6 cycles overhead for wait 
+
+# Linting purposes
+class ptr32(int):
+    def __getitem__(self, _: int) -> int:
+        ...
+
+    def __setitem__(self, _: int, _2: int) -> None:
+        ...
+
+class ptr8(int):
+    def __getitem__(self, _: int) -> int:
+        ...
+
+    def __setitem__(self, _: int, _2: int) -> None:
+        ...
+
+def uint(_: int) -> int:
+    ...
+
+class AudioPlayer:
+    def __init__(self):
+        pass
+
+    def initialize(self, wave_file: str, ram_buffer_mult: int):
+        self._audio_f = wav_file.WaveReader(wave_file)
+
+        # TODO: Resample channels if unsupported.
+        # NOTE: resampling can be done offline by the app
+        channels = self._audio_f.num_channels
+        sample_sz = self._audio_f.frame_width
+        framerate = self._audio_f.framerate
+        frame_cnt = self._audio_f.frame_cnt
+
+        # Driver only currently supports 1 channel 8 bit audio
+        # Will add support for resampling later.
+
+        print(f"channels {channels} sample_sz {sample_sz}B/s framerate {framerate} frame_cnt {frame_cnt}")
+
+        # TODO: VOLUME ADJUST NOT YET SUPPORTED
+        self._vol_recip = 1
+        self._ulp_buffer_mult = ram_buffer_mult
+        self._sample_buffer_size = self._ulp_buffer_mult * _RTC_BUFFER_SLICE_WIDTH
+        self._sample_buffer_split = self._sample_buffer_size // 2
+
+        self._sample_buffer = memoryview(bytearray(self._sample_buffer_size))
+        self._sample_buffer_lower = self._sample_buffer[:self._sample_buffer_split]
+        self._sample_buffer_upper = self._sample_buffer[self._sample_buffer_split:]
+
+        self._sample_buffer_idx = self._sample_buffer_size - 1  # So ISR will refill it
+        self._sample_cycles_delta = _RTC_FAST_CLK_HZ // framerate - _ULP_CLKS_WRITE_DELAY
+        self._ulp = ULP()
+
+        self._ulp.load_binary(0, ulp_firmware)
+        print(f"sample dt {self._sample_cycles_delta} cycles {self._sample_cycles_delta // 8} us")
+
+        # Zero both buffers (really just DAC writes with a zero argument)
+        _zero_sample_buf(ULP_BASE + ULP_SAMPLE_ARRAY0, _RTC_BUFFER_SLICE_WIDTH, 65535)  # type: ignore
+        _zero_sample_buf(ULP_BASE + ULP_SAMPLE_ARRAY1, _RTC_BUFFER_SLICE_WIDTH, 65535)  # type: ignore
+        self._last_ulp_buf_filled = 1
+        self._last_ulp_buf = 1
+        self._last_sample_half_filled = 1
+
+    def play(self):
+        self._audio_f.seek(0)
+        self._isr_pump = Timer(0)
+
+        # TODO: Adjust to new sample rates.
+        self._read_thread = _thread.start_new_thread(self._buffer_fill_thread, (1 / round(242 / self._ulp_buffer_mult),))
+        self._isr_pump.init(mode=Timer.PERIODIC, freq=250, callback=_pump_samples_isr)
+        self._ulp.run(ULP_ENTRY)
+
+    def _buffer_fill_thread(self, repeat_interval: int):
+        print(f"got recheck interval {repeat_interval}")
+
+        # TODO: Sync to buffer refill (and double the resample rate)
+        # BUG: buffer refill doesn't finish in time for sample pump sometimes.
+
+        while True:
+            buffer_half = int(self._sample_buffer_idx >= self._sample_buffer_split)
+            buffer_to_fill = self._sample_buffer_lower if buffer_half == 1 else self._sample_buffer_upper
+            c_idx = self._sample_buffer_idx
+
+            # TODO: may need to double buffer this one too for performance/stuttering
+            # reasons.
+            if buffer_half != self._last_sample_half_filled:
+                #t_start = time.ticks_ms()
+                b_read = asyncio.run(self._audio_f.read_into(buffer_to_fill))
+                #print(f"refill @ idx {c_idx}")
+                #t_end = time.ticks_ms()
+                #print(f"buf {buffer_half} refill {time.ticks_diff(t_end, t_start)} ms @ c_idx {c_idx}")
+
+                # TODO: Handle b_read
+                self._last_sample_half_filled = buffer_half
+
+            time.sleep_ms(5)
+
+def play_oneshot(file_path: str):
+    SINGLETON_AUDIO_PLAYER.initialize(file_path, _DEF_RAM_BUFFER_MULT)
+    SINGLETON_AUDIO_PLAYER.play()
+
+# TODO: Volume support
+@micropython.viper
+def _jit_sample_buf(dest: ptr32, src: ptr8, len: int, delta_cycles: int):
+    rtc_word_len = (len - 1) * 2
+
+    for rtc_addr in range(0, rtc_word_len, 2):
+        sample_addr: int = rtc_addr >> 1
+        sample = src[sample_addr]
+
+        dest[rtc_addr] = (_ULP_INSTR_REG_WR_TEMPLATE | (sample << _ULP_INSTR_REG_WR_DATA_OFFSET))
+        dest[rtc_addr + 1] = uint(_ULP_INSTR_WAIT_TEMPLATE) | delta_cycles
+
+    # NOTE: Last sample in the array has extra wait cycles (due to branching logic)
+    # Account for this in the final wait instruction.
+    dest[rtc_word_len] = (_ULP_INSTR_REG_WR_TEMPLATE | (src[len - 1] << _ULP_INSTR_REG_WR_DATA_OFFSET))
+    dest[rtc_word_len + 1] = uint(_ULP_INSTR_WAIT_TEMPLATE) | (delta_cycles - 25)
+
+@micropython.viper
+def _jit_inject_halts(dest: ptr32):
+    for rtc_addr in range(365 * 2):
+        dest[rtc_addr] = 0
+
+@micropython.viper
+def _zero_sample_buf(dest: ptr32, len: int, delta_cycles: int):
+    d_wr = (127 << _ULP_INSTR_REG_WR_DATA_OFFSET)
+
+    for rtc_addr in range(0, len * 2, 2):
+        dest[rtc_addr] = _ULP_INSTR_REG_WR_TEMPLATE | d_wr
+        dest[rtc_addr + 1] = int(_ULP_INSTR_WAIT_TEMPLATE) | delta_cycles
+
+# NOTE: Still rarely missing deadlines (potentially)
+_last_call_us = 0
+
+# MUST OCCUR AT LEAST 121 times a second!
+# NOTE: weird repeat stretching keeps occuring even with extensive debugging in here.
+# This function does not seem to be the problem, as the problem occurs even when
+# the ULP is halted after every buffer write (meaning a buffer refill is required
+# to restart the ULP; so deadline missing literally can't be causing this)
+@micropython.native
+def _pump_samples_isr(_: Timer):
+    global _last_call_us
+
+    self = SINGLETON_AUDIO_PLAYER
+
+    # NOTE: DEBUGGING
+    dt_ms = round(time.ticks_diff(time.ticks_us(), _last_call_us) / 1000)
+    _last_call_us = time.ticks_us()
+
+    if dt_ms > 8:
+        print(f"\033[33mDEADLINE MISSED: dt_call {dt_ms}/8 ms\033[0m")
+    
+    # Determine back buffer
+    idle_array = mem8[ULP_BASE + ULP_ACTIVE_ARRAY]
+
+    if self._last_ulp_buf_filled != self._last_ulp_buf:
+        print(f"\033[31mBUFFER UNDERRUN DETECTED!!! {self._last_ulp_buf} -> {idle_array} rf {self._last_ulp_buf_filled} \033[0m")
+        self._last_ulp_buf_filled = self._last_ulp_buf
+
+    # Came in before deadline; nothing to do.
+    if idle_array == self._last_ulp_buf: # was ulp buf filled but uh... no.
+        return
+    
+    self._last_ulp_buf = idle_array
+
+    # If buffer swapped an underrun is basically guaranteed.
+    test_new_idle = mem8[ULP_BASE + ULP_ACTIVE_ARRAY]
+    array_offset = ULP_SAMPLE_ARRAY0 if idle_array == 0 else ULP_SAMPLE_ARRAY1
+    
+    # rare case (underrun handling)
+    if idle_array != test_new_idle:
+        # RESYNC 
+
+        # TODO: Inject halts along the newly swapped in buffer and resync?
+        # Would need to resume execution at the refilled buffer address.
+        print(f"\033[31mBUFFER SWAP OCCURRED DURING LOAD!!! {idle_array} -> {test_new_idle}\033[0m")
+        print(f"force resync to {test_new_idle} (writing {idle_array})")
+
+        # FORCE ULP RESYNC
+        _jit_inject_halts(ULP_BASE + array_offset)  # type: ignore
+        _jit_sample_buf(ULP_BASE + array_offset, self._sample_buffer[self._sample_buffer_idx:], _RTC_BUFFER_SLICE_WIDTH, self._sample_cycles_delta) # type: ignore
+        self._ulp.run(ULP_BASE + array_offset)
+
+    else:
+        _jit_sample_buf(ULP_BASE + array_offset, self._sample_buffer[self._sample_buffer_idx:], _RTC_BUFFER_SLICE_WIDTH, self._sample_cycles_delta) # type: ignore
+  
+    self._sample_buffer_idx = (self._sample_buffer_idx + _RTC_BUFFER_SLICE_WIDTH) % (self._sample_buffer_size - _RTC_BUFFER_SLICE_WIDTH)
+    self._last_ulp_buf_filled = idle_array
+
+
+SINGLETON_AUDIO_PLAYER = AudioPlayer()
