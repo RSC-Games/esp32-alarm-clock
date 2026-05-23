@@ -26,22 +26,22 @@ import gc
 
 # Enforce signature checks permanently. Set this if using the secure bootloader
 # for an application where end-user modification is not desirable.
-_FORCE_SIGNATURE_VALIDATION = micropython.const(False)
+_FORCE_SIGNATURE_VALIDATION = const(False)
 
 # Force the boot NVS read-only whenever a payload is executed irrespective of the current
 # NVS setting. This does not affect UART/USB recovery mode payloads.
-_FORCE_NVS_LOCKOUT = micropython.const(False)
+_FORCE_NVS_LOCKOUT = const(False)
 
 # Permanently disable SD booting. Set this if your device does not have an SD card
 # slot (so it's literally infeasible to perform an SD boot).
-_FORCE_DISABLE_SD_BOOT = micropython.const(False)
+_FORCE_DISABLE_SD_BOOT = const(False)
 
 ################################## END CONFIGURATION ####################################
 
 # USB/UART recovery bootloader (data link layer)
-_UART_RCM_CONN_RETRIES = micropython.const(10)
-_UART_RCM_BANNER = micropython.const(b"\x55BOOT_RCM_RSC\xAA")
-_UART_RCM_CONN_ESTABLISHED = micropython.const(b"\xAARSC_RCM_BOOT\x55")
+_UART_RCM_CONN_RETRIES = const(10)
+_UART_RCM_BANNER = const(b"\x55BOOT_RCM_RSC\xAA")
+_UART_RCM_CONN_ESTABLISHED = const(b"\xAARSC_RCM_BOOT\x55")
 
 # Header contains 8b header prefix then 4 byte length field
 # Meant to be used with struct.pack(). crc32 is calculated over the entire
@@ -50,43 +50,43 @@ _UART_RCM_CONN_ESTABLISHED = micropython.const(b"\xAARSC_RCM_BOOT\x55")
 # - 4 byte header
 # - 2 byte flags field (0b(ready)(okay)XXXX(invalid)(badcrc))
 # - 2 byte length field (payload size + 4 bytes crc32)
-# - n - 4 bytes data payload
+# -z n - 4 bytes data payload
 # - 4 bytes crc32
-_UART_RCM_HEADER = micropython.const("<4sHH")
-_UART_RCM_PACKET = micropython.const("<8s{}sI")
-_UART_RCM_HEADER_PREFIX = micropython.const(b"\x64RCM")
-_UART_RCM_FLAG_READY = micropython.const(0x80)
-_UART_RCM_FLAG_ACCEPT = micropython.const(0x40)
-_UART_RCM_FLAG_COMMAND_ERROR = micropython.const(0x4)
-_UART_RCM_FLAG_INVALID_PACKET = micropython.const(0x2)
-_UART_RCM_FLAG_CORRUPT_PACKET = micropython.const(0x1)
+_UART_RCM_HEADER = const("<4sHH")
+_UART_RCM_PACKET = const("<8s{}sI")
+_UART_RCM_HEADER_PREFIX = const(b"\x64RCM")
+_UART_RCM_FLAG_READY = const(0x80)
+_UART_RCM_FLAG_ACCEPT = const(0x40)
+_UART_RCM_FLAG_COMMAND_ERROR = const(0x4)
+_UART_RCM_FLAG_INVALID_PACKET = const(0x2)
+_UART_RCM_FLAG_CORRUPT_PACKET = const(0x1)
 
 # RCM (transport layer)
 # - 2 byte command, 
 # - n - 2 bytes payload
-#_UART_RCM_DATA_PACKET = micropython.const("<H{}s")
+#_UART_RCM_DATA_PACKET = const("<H{}s")
 
 # BOOT command payload has
 # - 512 bytes signature
 # - n - 512 bytes data
-_UART_RCM_CMD_BOOT = micropython.const(2)
+_UART_RCM_CMD_BOOT = const(2)
 
 # Error reporting
-_DEBUG_LED_GPIO = micropython.const(2)
-_DEBUG_FLASH_LONG_MS = micropython.const(750)
-_DEBUG_FLASH_SHORT_MS = micropython.const(225)
-_DEBUG_FLASH_OFF_MS = micropython.const(150)
-_DEBUG_FLASH_IN_BETWEEN_MS = micropython.const(250)
-_DEBUG_FLASH_WAIT_MS = micropython.const(800)
+_DEBUG_LED_GPIO = const(2)
+_DEBUG_FLASH_LONG_MS = const(750)
+_DEBUG_FLASH_SHORT_MS = const(225)
+_DEBUG_FLASH_OFF_MS = const(150)
+_DEBUG_FLASH_IN_BETWEEN_MS = const(250)
+_DEBUG_FLASH_WAIT_MS = const(800)
 
-_SD_BOOT_BUTTON = micropython.const(0)
+_SD_BOOT_BUTTON = const(0)
 
-_SD_BUS_SLOT = micropython.const(3)
-_SD_BUS_FREQ = micropython.const(20_000_000)
-_SD_BUS_SCK = micropython.const(14)
-_SD_BUS_MISO = micropython.const(12)
-_SD_BUS_MOSI = micropython.const(13)
-_SD_BUS_CS = micropython.const(15)
+_SD_BUS_SLOT = const(3)
+_SD_BUS_FREQ = const(20_000_000)
+_SD_BUS_SCK = const(14)
+_SD_BUS_MISO = const(12)
+_SD_BUS_MOSI = const(13)
+_SD_BUS_CS = const(15)
 
 # Wrapper. Runs a mandatory GC run to reduce fragmentation.
 #
