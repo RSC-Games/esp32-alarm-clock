@@ -24,7 +24,7 @@ class _IRQ_RP2:
     def trigger(self) -> int: ...
 
 # pybv11
-# TODO: Not sure what the correct implementation is
+# NOTE: Not sure what the correct implementation is
 # NoneType
 _IRQ_PYB: TypeAlias = None
 

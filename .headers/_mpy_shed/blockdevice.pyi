@@ -24,7 +24,7 @@ from typing import Any, Final, Literal, Protocol, Tuple, Type, final, overload, 
 from _typeshed import AnyStr_co, Incomplete, structseq
 from typing_extensions import TypeAlias, TypeVar
 
-# TODO: improve the typechecking implementation if possible
+# improve the typechecking implementation if possible
 _OldAbstractReadOnlyBlockDev: TypeAlias = Any
 _OldAbstractBlockDev: TypeAlias = Any
 

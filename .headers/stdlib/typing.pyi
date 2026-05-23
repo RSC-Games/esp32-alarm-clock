@@ -1,6 +1,6 @@
 # Since this module defines "overload" it is not recognized by Ruff as typing.overload
 # ruff: noqa: F811
-# TODO: The collections import is required, otherwise mypy crashes.
+# NOTE: The collections import is required, otherwise mypy crashes.
 # https://github.com/python/mypy/issues/16744
 import collections  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import sys
@@ -422,7 +422,7 @@ class Sized(Protocol, metaclass=ABCMeta):
 
 @runtime_checkable
 class Hashable(Protocol, metaclass=ABCMeta):
-    # TODO: This is special, in that a subclass of a hashable class may not be hashable
+    # NOTE: This is special, in that a subclass of a hashable class may not be hashable
     #   (for example, list vs. object). It's not obvious how to represent this. This class
     #   is currently mostly useless for static checking.
     @abstractmethod
@@ -680,7 +680,7 @@ class ValuesView(MappingView, Collection[_VT_co]):
     def __reversed__(self) -> Iterator[_VT_co]: ...
 
 class Mapping(Collection[_KT], Generic[_KT, _VT_co]):
-    # TODO: We wish the key type could also be covariant, but that doesn't work,
+    # NOTE: We wish the key type could also be covariant, but that doesn't work,
     # see discussion in https://github.com/python/typing/pull/273.
     @abstractmethod
     def __getitem__(self, key: _KT, /) -> _VT_co: ...

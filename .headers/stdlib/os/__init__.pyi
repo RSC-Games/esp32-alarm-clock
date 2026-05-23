@@ -138,8 +138,8 @@ if sys.platform != "win32":
         CLD_KILLED: int
         CLD_STOPPED: int
 
-    # TODO: SCHED_RESET_ON_FORK not available on darwin?
-    # TODO: SCHED_BATCH and SCHED_IDLE are linux only?
+    # SCHED_RESET_ON_FORK not available on darwin??
+    # SCHED_BATCH and SCHED_IDLE are linux only??
     SCHED_OTHER: int  # some flavors of Unix
     SCHED_BATCH: int  # some flavors of Unix
     SCHED_IDLE: int  # some flavors of Unix
@@ -208,7 +208,7 @@ if sys.platform != "win32":
 # O_PATH: int  # Gnu extension if in C library
 # O_TMPFILE: int  # Gnu extension if in C library
 # O_LARGEFILE: int  # Gnu extension if in C library
-# O_ACCMODE: int  # TODO: when does this exist?
+# O_ACCMODE: int  # when does this exist???
 
 if sys.platform != "win32" and sys.platform != "darwin":
     # posix, but apparently missing on macos

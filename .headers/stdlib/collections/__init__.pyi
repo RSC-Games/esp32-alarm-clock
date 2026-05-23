@@ -109,7 +109,7 @@ class UserDict(MutableMapping[_KT, _VT]):  # type: ignore
     def __copy__(self) -> Self: ...
 
     # `UserDict.fromkeys` has the same semantics as `dict.fromkeys`, so should be kept in line with `dict.fromkeys`.
-    # TODO: Much like `dict.fromkeys`, the true signature of `UserDict.fromkeys` is inexpressible in the current type system.
+    # Much like `dict.fromkeys`, the true signature of `UserDict.fromkeys` is inexpressible in the current type system.
     # See #3800 & https://github.com/python/typing/issues/548#issuecomment-683336963.
     @classmethod
     @overload
