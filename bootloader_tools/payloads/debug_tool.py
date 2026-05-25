@@ -65,6 +65,48 @@ def mount_sd(mount_pt: str) -> bool:
 
     return True
 
+def stub_import(*args):
+    print(f"got import args {args}")
+
+_ORIG_IMPORT = __import__
+
+_PATCH_LISTS = {
+    "main": {
+    },
+    "ucrypto.hmac": {
+        "compare_digest": stub_import
+    }
+}
+
+def patched_import(name: str, globals: dict | None, locals: dict | None, fromlist: tuple, level: int):
+    print(f"importing path {name}")
+
+    if name in sys.modules:
+        print("already imported; skipping")
+        return sys.modules[name]
+
+    print(f"\nglobals {globals}")
+    print(f"\nlocals {locals}")
+    print(f"\nfromlist: {fromlist}")
+    print(f"import level {level}")
+
+    in_module = _ORIG_IMPORT(name, globals, locals, fromlist, level)
+
+    if name in _PATCH_LISTS:
+        patch_def = _PATCH_LISTS[name]
+        print("module has patch definitions")
+
+        for attr in patch_def:
+            if hasattr(in_module, attr):
+                print(f"patching attr {attr}")
+                setattr(in_module, attr, patch_def[attr])
+            else:
+                print(f"warning: missing attribute {attr}")
+        
+    else:
+        print("no patch def found")
+
+    return in_module
 
 def firm_entry(pubkey, nvs):
     print("have code exec post firm_entry")
@@ -107,6 +149,11 @@ def firm_entry(pubkey, nvs):
         print("sd mounted")
 
     print("done testing; entering fake repl")
+
+    # Inject patcher
+    import builtins
+    builtins.__import__ = patched_import
+    print("import patcher injected")
 
     print(f"pubkey {pubkey}")
     print(f"nvs {nvs}")

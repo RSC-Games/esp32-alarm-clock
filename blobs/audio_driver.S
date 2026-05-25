@@ -37,7 +37,7 @@ entry:
     move r0, sample_index
     ld r3, r0, 0
 
-    // TODO: swap buffers if r3 == 2048 (reached end of buffer)
+    // swap buffers if r3 == 2048 (reached end of buffer)
     sub r2, r3, 2048
     jump buffer_swap, EQ // Buffer switchover required
 
@@ -63,7 +63,7 @@ swap_done:
     move r0, sample_array0
     add r2, r2, r0  // Offset in RTC mem of buffer (still word address)
 
-    // TODO: convert byte index to word index + byte offset
+    // convert byte index to word index + byte offset
     //and r1, r3, 0x1 // Need lsb for +0/+1 offset
     //rsh r3, r3, 2  // Bytes to words
 
@@ -73,7 +73,7 @@ swap_done:
     // r2 (current array word address)
     // r3 (sample word index)
 
-    // Absolute sample address in words (TODO: does not handle offsets)
+    // Absolute sample address in words
     //add r2, r2, r3
     move r3, r2 // debugging
 

@@ -1,14 +1,14 @@
-from bootloader import uart_rcm, uart_imager, output
+from bootloader import uart_rcm, uart_imager, output, util
 import traceback
 import time
 import sys
-import os
 
 def main(firm_name: str):
-    output.print_tool("attempting to open device...")
+    port = util.get_port_path()
+    output.print_tool(f"attempting to open device on port {port}...")
 
     try:
-        rcm = uart_rcm.open_device("/dev/ttyUSB1")
+        rcm = uart_rcm.open_device(port)
 
         t_start_ms = time.monotonic_ns() / 1_000_000
         uart_rcm.boot_payload(rcm, "../gen_imager.mpy")
