@@ -222,42 +222,40 @@ def _do_osk_input(keymaps: list[str], key_set: dict[str, list], max_chars: int, 
         dev.DISPLAY.draw_hline(0, 16, 128)
         
         # Draw keyboard on screen
-        # y = 0
+        y = 0
 
-        # for y in range(len(key_set[keymap][row])):
-        #     # Column geometry, unlike row geometry, is not guaranteed to be the same 
-        #     # as in the keymap before compilation. 
-        #     x = 0
+        # HACK: Old charmap gen code was written badly so there's no good way to get lengths of each row...
+        while (0, y) in char_coords_aliases:
+            x = 0
 
-        #     while (x, y) in char_coords_aliases:
-        #         # TODO: Draw osk with 5x7 font (rather than the 8x8)
-        #         char = char_coords_aliases[(x, y)]
-        #         dev.DISPLAY.draw_text(char[2][0] + _OSK_KBD_PX_ALIGN, char[2][1], char[0], font_5x7)
-        #         x += 1
+            while (x, y) in char_coords_aliases:
+                char = char_coords_aliases[(x, y)]
+                dev.DISPLAY.draw_text(char[2][0] + _OSK_KBD_PX_ALIGN, char[2][1], char[0], font_5x7)
+                x += 1
             
-        #     y += 1
+            y += 1
 
         # Draw keyboard on screen
-        # BUG: Old drawing code works but new code doesn't??
-        y = 0
-        try:
-            while True:
-                # Test access to this row.
-                _ = char_coords_aliases[(0, y)]
+        # # BUG: Old drawing code works but new code doesn't??
+        # y = 0
+        # try:
+        #     while True:
+        #         # Test access to this row.
+        #         _ = char_coords_aliases[(0, y)]
                 
-                # Now iterate over the x coordinate.
-                try:
-                    x = 0
-                    while True:
-                        char = char_coords_aliases[(x, y)]
-                        dev.DISPLAY.draw_text(char[2][0] + _OSK_KBD_PX_ALIGN, char[2][1], char[0], font_5x7)
-                        x += 1
-                except KeyError:
-                    pass
+        #         # Now iterate over the x coordinate.
+        #         try:
+        #             x = 0
+        #             while True:
+        #                 char = char_coords_aliases[(x, y)]
+        #                 dev.DISPLAY.draw_text(char[2][0] + _OSK_KBD_PX_ALIGN, char[2][1], char[0], font_5x7)
+        #                 x += 1
+        #         except KeyError:
+        #             pass
                 
-                y += 1
-        except KeyError:
-            pass
+        #         y += 1
+        # except KeyError:
+        #     pass
         
         # Highlight selected character
         cur_char = char_coords_aliases[(col, row)]

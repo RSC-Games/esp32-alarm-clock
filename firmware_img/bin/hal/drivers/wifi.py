@@ -210,7 +210,7 @@ class WiFiManager:
                 return True
 
         # No networks available/registered. 
-        logs.print_warning("recovery", "no networks found")
+        logs.print_warning("net", "no networks found")
         return False
     
     def link_is_up(self) -> bool:

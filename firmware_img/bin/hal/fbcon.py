@@ -1,6 +1,7 @@
 from micropython import const
 from hal import peripherals
 import xglcd_font
+import logs
 
 GLOBAL_FBCON = None
 
@@ -35,6 +36,7 @@ class FBConsole:
 
         for n_line in lines:
             self.lines.append(n_line)
+            logs.print_info("fbcon", line)
             self.total_lines += 1
 
         if len(self.lines) > _CONSOLE_MAX_LINES:

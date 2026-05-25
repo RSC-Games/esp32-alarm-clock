@@ -437,53 +437,41 @@ def _patch_attribute(in_module: Any, patch_attr: Any, sym_name: str) -> None:
 def _patch_stub(*args):
     print(f"warning: stubbed function called")
 
-def __patch_main():
-    # XXX: should not be doing NTP time sync on main thread
-    import ntptime
-    
-    dev.NIC.bring_up() 
 
-    if dev.NIC.link_is_up():
-        import ntptime
-        print("ntp time sync complete (hacky)")
-        ntptime.settime()
+def init():
+    """
+    Fully initialize all peripheral hardware. Most of the hardware has already been
+    partially initialized, but network/display/pwr_sense require a bit more.
+    """
 
-    # Hardware is online (NTP time sync not guaranteed)
-    # Start clock
-    clock = Clock()
+    # Kick up the CPU clock (currently powersave not required)
+    freq(240_000_000)
 
-    from ui.clock import Alarm
+    # TODO: Make less ANNOYINGLY NOISY (set vcom_desel/precharge/clock div)
+    # see https://www.hpinfotech.ro/SSD1309.pdf
+    # TODO: Background thread
+    #NIC.bring_up()
 
-    #audio_sampled.play_oneshot("/sd/other/02 - One Step Closer-slowed.wav")
+    DISPLAY.contrast(1)
+    DISPLAY.set_precharge(1, 2)
 
-    clock.local_time.utc_offset = -5  # EST
-    clock.alarms.append(Alarm((8,45,-1,-1), None))
+    # XXX: fbcon auto show not supported
+    FBCON.set_hidden(True)
 
-    #time.sleep(100)
-    # TODO: clock applet needs to be refreshed after being in any other menu
-    while True:
-        clock.tick()
-        clock.repaint(dev.DISPLAY)
-        time.sleep_ms(16)
+    # TODO: start pwr_sense monitoring driver to detect power loss events and prevent
+    # the device from wasting CMOS battery energy
 
-    #time.sleep(100)
-
-    # NOTE: Showing advanced stuff on screen doesn't play nice with the buffer refill ISR
-    # we can only play music for alarms because of this (without a more advanced driver)
-    # may be worth increasing the file read speed....
-    #osk.prompt_ok("Hello!", ["testing osk print", "does ok work", "yes or no", "hehe"])
-    #osk.prompt_yn("Hello!", ["testing osk print", "does ok work", "yes or no", "hehe"])
-
-    #osk.prompt_text(osk.LAYOUT_KEYBOARD, 50, False)
+    if not _mount_sd("/sd"):
+        logs.print_warning("hal", "/sd node not accessible")
 
 # patch definitions below here
 
 _PATCH_LISTS = {
-    "main": {
-        "main": __patch_main
-    },
     # TODO: attribute patching (non-function)
     "ui.clock": {
+    },
+    "hal.peripherals": {
+        "init": init
     }
 }
 ####################################################################################

@@ -3,7 +3,6 @@ import bootrom
 import time
 import logs
 import sys
-import os
 
 sys.path.append("/firm/bin")
 sys.path.append("/firm/app")
@@ -18,8 +17,6 @@ def app_main(nvs: ReadOnlyNVS):
             logs.print_info("app", f"appver {f.read().strip()}")
 
         peripherals.init()
-
-        # TODO: TEST THE UPDATED OSK.
         main.main()
     
     except BaseException as ie:

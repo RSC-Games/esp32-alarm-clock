@@ -66,11 +66,19 @@ def init():
     # TODO: Background thread
     #NIC.bring_up()
 
+    # XXX: Don't use in production (brightness should be configurable!)
+    # TODO: Relocate to SSD1309 driver
+    DISPLAY.contrast(1)
+    DISPLAY.set_precharge(1, 2)
+
+    # XXX: fbcon auto show not supported
+    FBCON.set_hidden(True)
+
     # TODO: start pwr_sense monitoring driver to detect power loss events and prevent
     # the device from wasting CMOS battery energy
 
     if not _mount_sd("/sd"):
-        logs.print_warning("hal", "/sd not created")
+        logs.print_warning("hal", "/sd node not accessible")
 
 def _mount_sd(mount_pt: str) -> bool:
     sd = None
@@ -133,3 +141,9 @@ def get_button(button: Pin) -> bool:
     Immediately determine button state without waiting for a release.
     """
     return not button.value()
+
+def get_snooze() -> bool:
+    """
+    Get the current snooze bar state.
+    """
+    return get_button(BTN_SNOOZE)

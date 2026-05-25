@@ -3,7 +3,6 @@ from math import floor
 from framebuf import FrameBuffer, MONO_VLSB  # type: ignore
 
 # TODO: replace with more space efficient storage method
-
 class XglcdFont(object):
     """
     Font data in X-GLCD format.
