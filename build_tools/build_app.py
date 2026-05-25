@@ -1,10 +1,11 @@
 import build_cmdlets
+import platform
 import pathlib
 import sys
 import os
 
 # Windows-specific; port to linux later
-MPY_CROSS_PATH = "mpy-cross"#f"{pathlib.Path(__file__).parent}/mpy-cross.exe"
+MPY_CROSS_PATH = "mpy-cross" if platform.system() == "linux" else f"{pathlib.Path(__file__).parent}/mpy-cross.exe"
 MPY_CROSS_FLAGS = "-O2 -march=xtensawin"
 MAX_FIRM_IMG_SIZE = int(60*1024)  # Not space constrained
 

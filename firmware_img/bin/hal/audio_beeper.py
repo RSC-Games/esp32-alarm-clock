@@ -53,7 +53,7 @@ class Beeper:
 
         # Buffer gen/write and trap buffer
         high_samp = round(255 * volume)
-        _jit_gen_frequency(ULP_BASE + ULP_SAMPLE_ARRAY0, high_samp, self._num_samples, self._sample_cycles_delta)  # type: ignore
+        _jit_gen_frequency(ULP_BASE + ULP_SAMPLE_ARRAY0, high_samp, num_samples, sample_cycles_delta)  # type: ignore
         _jit_inject_halts(ULP_BASE + ULP_SAMPLE_ARRAY1)  # type: ignore
 
     def play(self) -> None:
