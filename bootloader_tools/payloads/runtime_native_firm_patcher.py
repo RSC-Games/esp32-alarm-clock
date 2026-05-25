@@ -452,8 +452,9 @@ def init():
     # TODO: Background thread
     #NIC.bring_up()
 
-    DISPLAY.contrast(1)
-    DISPLAY.set_precharge(1, 2)
+    DISPLAY.contrast(0)
+    DISPLAY.set_precharge(1, 1)
+    DISPLAY.set_vcomdesel(0)
 
     # XXX: fbcon auto show not supported
     FBCON.set_hidden(True)

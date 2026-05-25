@@ -68,8 +68,9 @@ def init():
 
     # XXX: Don't use in production (brightness should be configurable!)
     # TODO: Relocate to SSD1309 driver
-    DISPLAY.contrast(1)
-    DISPLAY.set_precharge(1, 2)
+    DISPLAY.contrast(0)
+    DISPLAY.set_precharge(1, 1)
+    DISPLAY.set_vcomdesel(0)
 
     # XXX: fbcon auto show not supported
     FBCON.set_hidden(True)
