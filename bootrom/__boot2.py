@@ -684,6 +684,7 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, firm_name: str, sd_bo
         # Ensure nvs version is up to date (especially after a firmware update)
         if firm_version > last_booted_ver:
             nvs.set_i32("version", firm_version)
+            nvs.commit()
 
         logs.print_info("boot", f"found firmware version {firm_version}")
 
