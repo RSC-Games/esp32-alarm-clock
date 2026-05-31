@@ -47,7 +47,7 @@ def main():
     # XXX: Neither of these should be hardcoded.
     #audio_sampled.play_oneshot("/sd/other/02 - One Step Closer-slowed.wav")
     clock.local_time.utc_offset = -5  # EST
-    clock.alarms.append(Alarm((8, 45, -1, -1), (0, 1, 2, 3, 4)))
+    clock.alarms.append(Alarm((7, 0, -1, -1), (0, 1, 2, 3, 4)))
 
     #time.sleep(100)
     # TODO: clock applet needs to be refreshed after being in any other menu

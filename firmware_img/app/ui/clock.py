@@ -85,12 +85,11 @@ class Alarm():
         if wkday is not None:
             self.month = time[2]
             self.day = time[3]
-            self.wkday = None
         else:
             self.month = -1
             self.day = -1
-            self.wkday = wkday
-
+        
+        self.wkday = wkday
         self.hour = time[0]
         self.minute = time[1]
         self.last_day_triggered = -1  # Prevent retriggering
