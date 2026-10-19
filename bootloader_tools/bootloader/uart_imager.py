@@ -68,7 +68,7 @@ def _establish_connection(uart: serial.Serial) -> bool:
                 break
 
         if not found_end_byte:
-            output.print_tool(f"no found start byte; retrying ({i+1}/{_IMAGER_CONN_RETRIES})")
+            output.print_tool(f"no start byte; retrying ({i+1}/{_IMAGER_CONN_RETRIES})")
             time.sleep(0.1)
             continue
             
@@ -88,7 +88,7 @@ def _establish_connection(uart: serial.Serial) -> bool:
     return False
 
 
-def _build_datalink_packet(flags: int, payload: bytes) -> bytearray:
+def _build_datalink_packet(flags: int, payload: bytes | bytearray) -> bytearray:
     """
     Build a UART packet to send to the bootrom with the provided flags and payload.
     """
@@ -118,7 +118,7 @@ def _get_datalink_packet(uart: serial.Serial) -> tuple[int, bytes] | None:
     # NOTE: This will spam packets to the host until the payload is fully transferred
     # unless transmission is cut off early.
     if header_magic != _IMAGER_HEADER_PREFIX:
-        raise ValueError(f"got illegal header magic {header_magic}")
+        raise ValueError(f"invalid header magic {header_magic}")
 
     # NOTE: Flags are a DONT CARE (ignore them)
     # Read the rest of the packet payload.
@@ -136,7 +136,7 @@ def _get_datalink_packet(uart: serial.Serial) -> tuple[int, bytes] | None:
     # Ensure packet hasn't been corrupted during transfer.
     if packet_crc != recv_crc:
         print(f"warning: packet corrupt: got crc {packet_crc} recv'd {recv_crc}")
-        print(f"packet contents {packet}")
+        print(f"packet contents: {packet}")
         return None
     
     return int(flags), bytes(payload_section)
@@ -249,7 +249,7 @@ def _get_installed_firm_hash(uart: serial.Serial) -> bytes:
     uart.write(packet)
 
     if not device_is_ready(uart):
-        output.print_tool("cmd write error")
+        output.print_tool("cmd write fail")
         return b""
 
     return device_get_response(uart)
@@ -261,7 +261,7 @@ def reboot_to_uart(uart: serial.Serial) -> None:
     uart.write(packet)
 
     if not device_is_ready(uart):
-        output.print_tool(f"software reboot to uart failed")
+        output.print_tool(f"sw reboot to uart failed")
 
 def reboot_to_recovery(uart: serial.Serial) -> None:
     output.print_tool("rebooting device to recovery.img")
@@ -270,7 +270,7 @@ def reboot_to_recovery(uart: serial.Serial) -> None:
     uart.write(packet)
 
     if not device_is_ready(uart):
-        output.print_tool(f"software reboot to rcm failed")
+        output.print_tool(f"sw reboot to rcm failed")
 
 def reboot(uart: serial.Serial) -> None:
     output.print_tool("rebooting device to main firm.img")
@@ -280,6 +280,6 @@ def reboot(uart: serial.Serial) -> None:
 
     try:
         if not device_is_ready(uart):
-            output.print_tool(f"software reboot to firm failed")
+            output.print_tool(f"sw reboot to firm failed")
     except:
         pass # don't care if no response.

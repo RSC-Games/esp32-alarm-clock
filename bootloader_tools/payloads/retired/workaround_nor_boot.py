@@ -10,6 +10,7 @@ import gc
 # NOTE: WORKAROUND NOR BOOT IS FROM A TIME WHEN THE BOOTROM BOOTLOADER WAS NOT FUNCTIONAL!
 # NOT RECOMMENDED FOR PRODUCTION AND WILL BE SIGNIFICANTLY BEHIND THE BOOTROM IN FEATURE
 # SUPPORT!!!!
+# XXX: Effectively fully replaced by runtime_native_firm_patcher. Do not use!
 #################################### CONFIGURATION ######################################
 
 # Enforce signature checks permanently. Set this if using the secure bootloader

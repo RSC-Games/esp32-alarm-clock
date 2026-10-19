@@ -7,10 +7,13 @@ import sys
 import os
 import gc
 
+# NOTE: This script is purely for development purposes. It serves no practical use as a
+# bootable script and also will never be signed.
+
 print("code exec pre entry")
 gc.collect()
 
-# initrd size (not supported on current bootrom):
+# initrd size (not supported nor required on current bootrom):
 #f_bsize, _, f_blocks, f_bfree, _, _, _, _, _, _ = os.statvfs("/initrd")
 
 #print(f"initrd free/size: {f_bsize * f_bfree}/{f_bsize * f_blocks} B")
@@ -25,7 +28,6 @@ def dac_toggle(dac: DAC, level: int, interval: int, cnt: int):
 dac = DAC(25)
 
 def test_alarm_noise(level: int, interval: int, duration: int, cycles: int):
-
     for i in range(cycles):
         dac_toggle(dac, level, interval, duration//interval)
         time.sleep_ms(100)
@@ -153,7 +155,7 @@ def firm_entry(pubkey, nvs):
     # Inject patcher
     import builtins
     builtins.__import__ = patched_import
-    print("import patcher injected")
+    print("runtime code patcher injected")
 
     print(f"pubkey {pubkey}")
     print(f"nvs {nvs}")

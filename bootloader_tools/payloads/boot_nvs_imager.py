@@ -2,7 +2,6 @@ from ucrypto.ufastrsa.rsa import RSA
 from __nvs_perms import ReadOnlyNVS
 from micropython import const
 import logs
-import time
 
 _PRODUCT_ID = const("esp32_alarm_clock")
 _PID_HEADER = const("RALC")
@@ -37,7 +36,7 @@ _BOOT_MPY = const(1)   # Booting a .bin sounds cooler but .mpy is easier to test
 #   by provisioning tools/full shared key)
 #
 def format_boot_nvs(pubkey: RSA, boot_nvs: ReadOnlyNVS):
-    # NVS provided by bootrom; not required here.
+    # NVS provided by bootrom
     logs.print_info("nvs-init", "setting up boot nvs")
 
     # Product ID and serial are only written ONCE
@@ -47,7 +46,7 @@ def format_boot_nvs(pubkey: RSA, boot_nvs: ReadOnlyNVS):
         dev_prod_id = boot_nvs.get_str("prod_id")
 
         if dev_prod_id != _PRODUCT_ID:
-            logs.print_error("nvs-init", "prod id mismatch; aborting")
+            logs.print_error("nvs-init", "prod_id mismatch; aborting")
             return
         
     else:
@@ -125,6 +124,8 @@ def _gen_sn(prefix: str, uid: int) -> str:
 # Serial checksum generation
 def _sum_cols(nums: str, offset: int) -> int:
     sum = 0
+
+    # TODO: functools.reduce?
     for i in range(offset, len(nums), 2):
         sum += int(nums[i])
 
@@ -134,7 +135,7 @@ def firm_entry(pubkey, nvs):
     logs.print_warning("nvs-init", "FLASHING NVS")
     format_boot_nvs(pubkey, nvs)
 
-    logs.print_warning("nvs-init", "payload done. external reset required")
+    logs.print_warning("nvs-init", "provisioning done. waiting for hw reset")
 
     while True:
         pass

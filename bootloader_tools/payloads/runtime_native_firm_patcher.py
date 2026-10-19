@@ -3,7 +3,6 @@
 from ucrypto.ufastrsa.rsa import RSA
 from __nvs_perms import ReadOnlyNVS
 from typing import NoReturn, Any, Callable
-import micropython
 import logs
 import sys
 import gc
@@ -16,7 +15,7 @@ _FORCE_SIGNATURE_VALIDATION = const(False)
 
 # Force the boot NVS read-only whenever a payload is executed irrespective of the current
 # NVS setting. This does not affect UART/USB recovery mode payloads.
-# XXX: NVS lockout NOT performed at UART FIRM boot
+# NOTE: NVS lockout is NOT performed at UART FIRM boot
 _FORCE_NVS_LOCKOUT = const(False)
 
 # Permanently disable SD booting. Set this if your device does not have an SD card
@@ -432,6 +431,8 @@ def _patch_attribute(in_module: Any, patch_attr: Any, sym_name: str) -> None:
 
 ####################################################################################
 # DYNAMIC PATCHING METADATA
+# TODO: should be moved to its own source file(s)/should support redirecting to a 
+# folder.
 ####################################################################################
 # patch functions
 def _patch_stub(*args):

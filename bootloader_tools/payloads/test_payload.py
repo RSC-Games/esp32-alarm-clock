@@ -7,7 +7,9 @@ import _thread
 import logs
 import time
 import sys
-import gc
+
+# NOTE: music player payload. No longer necessary (except when the driver rewrite
+# eventually occurs).
 
 _SD_BUS_SLOT = const(3)
 _SD_BUS_FREQ = const(20_000_000)

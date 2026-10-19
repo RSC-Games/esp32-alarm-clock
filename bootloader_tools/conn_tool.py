@@ -1,4 +1,5 @@
 from bootloader import uart_rcm, output, util
+from serial.serialutil import SerialException
 import traceback
 import time
 import sys
@@ -16,7 +17,7 @@ def compile_payload(payload: str) -> int:
             return -1
 
     else:
-        output.print_tool("payload source missing; injecting bin")
+        output.print_tool("payload src missing; injecting bin")
         
     return 0
 
@@ -31,10 +32,14 @@ def main(payload: str):
         uart_rcm.boot_payload(rcm, payload)
         t_end_ms = time.monotonic_ns() / 1_000_000
         
-        output.print_tool(f"payload injected; took {(t_end_ms - t_start_ms):.2f} ms")
+        output.print_tool(f"payload injected; time {(t_end_ms - t_start_ms):.2f} ms")
         uart_rcm.run_user_connection_tool(rcm)
+
+    except SerialException:
+        output.print_tool(f"fatal: port doesn't exist. aborting")
+
     except OSError as ie:
-        output.print_tool(f"error: unable to read from device")
+        output.print_tool(f"fatal: unable to read from device")
         traceback.print_exception(ie)
 
 

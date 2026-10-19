@@ -72,18 +72,20 @@ def do_fake_repl():
     except BaseException as ie:
         sys.print_exception(ie)
 
+    globals().update({'fs':fs})
+
     while True:
         print(sys.ps1, end="")
         in_text = sys.stdin.readline()
 
         try:
-            out = eval(in_text, globals().update({'fs':fs}), locals())
+            out = eval(in_text, globals(), locals())
 
             if out is not None:
                 print(out)
         except:
             try:
-                exec(in_text, globals().update({'fs':fs}), locals())
+                exec(in_text, globals(), locals())
             except BaseException as ie:
                 sys.print_exception(ie)
 

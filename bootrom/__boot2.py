@@ -22,6 +22,10 @@ import logs
 import sys
 import gc
 
+# NOTE: FatFS had a few CVEs this year that resulted in DoS or potentially arbitrary
+# code execution.
+# TODO: Detect these vulnerable micropython versions and refuse to boot/alert the user.
+
 #################################### CONFIGURATION ######################################
 
 # Enforce signature checks permanently. Set this if using the secure bootloader
@@ -194,8 +198,10 @@ def _boot_clean_syspath() -> None:
 # X "lprod_id" (int): length of the product id
 # - "serial" (blob): contains the device serial (randomly generated at provisioning)
 # - "lserial" (int): contains the length of the device serial
-# X "shared_key" (blob): contains the device shared key + sig (signed by root key)
+# X "shared_key" (blob): contains the device shared key
 # X "lshared_key" (int): length of the shared key
+# X "shared_sig" (blob): contains the RSA signature of the shared key (signed by root key)
+# X "lshared_sig" (int): length of the signature (likely 512 bytes)
 # - "firm" (blob): contains the name of the NOR firmware.img app to load
 # - "lfirm" (int): length of the name of the NOR image
 # - "version" (int): version id of the firmware image to load
@@ -232,17 +238,42 @@ def _boot_load_nvs(pubkey: RSA) -> ReadOnlyNVS:
         _fatal_error_led(pubkey, boot_nvs, 1, 2)
 
 
+# Load the device-line specific shared key from the NVS. The key must be signed by whatever
+# master key is provided by in the bootrom.
+#
+# TODO: Pointer erased at boot lockout.
+@gc_clean
+def _boot_load_shared_key(root_key: RSA, nvs: ReadOnlyNVS) -> RSA | None:
+    from hashlib import sha256
+
+    key = nvs.get_blobn("shared_key")
+    sig = nvs.get_blobn("shared_sig")
+
+    sig_hash = root_key.pkcs_verify(sig)
+    bin_hash = sha256(key).digest()
+
+    if bin_hash != sig_hash:
+        logs.print_error("boot", "no shared key provisioned")
+        return None
+
+    # TODO: parse as ASN.1?? or some weird custom binary blob?
+    # ASN.1 makes more sense.
+    #RSA()
+    return None
+
+
 # Launch the recovery mode listener on UART0. Log messages will no
 # longer be printed as long as the rcm listener is running.
 #
 # NOTE: Pointer erased at boot lockout.
-def _boot_launch_uart_rcm(pubkey: RSA, nvs: ReadOnlyNVS) -> NoReturn:
+def _boot_launch_uart_rcm(root_key: RSA, nvs: ReadOnlyNVS) -> NoReturn:
     from select import poll, POLLIN
     from binascii import crc32
     from io import BytesIO
     import struct
     import time
 
+    shared_key = _boot_load_shared_key(root_key, nvs)
     logs.print_info("boot", "entered USB/UART recovery mode boot mode")
 
     rcm_pipe_in = sys.stdin.buffer
@@ -331,7 +362,7 @@ def _boot_launch_uart_rcm(pubkey: RSA, nvs: ReadOnlyNVS) -> NoReturn:
             rcm_pipe_out.write(err_packet)
 
             # Read everything left in the packet anyway (but don't allocate memory for it)
-            # to reduce the chance of desynchronizing with the PC
+            # to reduce the chance of desynchronizing with the upstream device.
             dump_buf = bytearray(4096)
             rcm_pipe_in.read(size % len(dump_buf))
 
@@ -340,18 +371,18 @@ def _boot_launch_uart_rcm(pubkey: RSA, nvs: ReadOnlyNVS) -> NoReturn:
 
             continue
 
-        # NOTE: Flags are a DONT CARE (ignore them)
-        # Read the rest of the packet payload.
+        # NOTE: currently ignores flags from host
+        # extract data section
         packet = bytearray(header_sz + size)
         payload_section = memoryview(packet)[header_sz:]
 
         struct.pack_into(_UART_RCM_HEADER, packet, 0, header_magic, flags, size)
 
-        # Ensure CRC section is zeroed
+        # Zero crc section for sum
         rcm_pipe_in.readinto(payload_section, size - 4)  # type: ignore
         recv_crc = int.from_bytes(rcm_pipe_in.read(4), "little")
 
-        # Ensure packet hasn't been corrupted during transfer.
+        # CRC check.
         if crc32(packet) != recv_crc:
             err_packet = build_packet(_UART_RCM_FLAG_CORRUPT_PACKET, b"BAD_CRC")
             rcm_pipe_out.write(err_packet)
@@ -370,9 +401,18 @@ def _boot_launch_uart_rcm(pubkey: RSA, nvs: ReadOnlyNVS) -> NoReturn:
 
         # Should use a switch statement/LUT but ehh
         if packet_cmd == _UART_RCM_CMD_BOOT:  # BOOT_FIRM
-            valid = _boot_exec_signed_firm(pubkey, nvs, transport_layer_payload[:512], transport_layer_payload[512:])
-            # Won't ever return if the signature is valid.
+            in_sig = transport_layer_payload[:512]
+            in_payload = transport_layer_payload[512:]
 
+            # most payloads should be signed by the shared key
+            valid = _boot_exec_signed_firm(shared_key, nvs, in_sig, in_payload) if shared_key is not None else False
+
+            # root key (probably universal RSC Games signed payload)
+            # still usable even without a valid shared key.
+            if not valid:
+                valid = _boot_exec_signed_firm(root_key, nvs, in_sig, in_payload)
+
+            # Won't ever return if the signature is valid.
             if not valid:
                 err_packet = build_packet(_UART_RCM_FLAG_COMMAND_ERROR, b"BAD_SIGNATURE")
                 rcm_pipe_out.write(err_packet)
@@ -392,7 +432,7 @@ def _boot_mount_payload_fs(mount_pt: str, f_path: str, bin: memoryview[int]) -> 
     from vfs import mount
 
     class PayloadFS:
-        def __init__(self, fname: str, in_bytes: bytes) -> None:
+        def __init__(self, fname: str, in_bytes: bytes | memoryview[int]) -> None:
             """
             Initializes a fake FS. Takes the filename (target file path) of the singular file
             and creates a fake file entry.
@@ -402,7 +442,7 @@ def _boot_mount_payload_fs(mount_pt: str, f_path: str, bin: memoryview[int]) -> 
 
         def mount(self, readonly: bool, _: bool) -> None:
             if not readonly:
-                raise OSError("rw mount on ro fs")
+                raise OSError("rw mount on rofs")
 
         def umount(self) -> None:
             del self.fname
@@ -415,7 +455,7 @@ def _boot_mount_payload_fs(mount_pt: str, f_path: str, bin: memoryview[int]) -> 
             if not perms == "rb":
                 raise OSError("EPERM")
             
-            return BytesIO(self.f_bytes)
+            return BytesIO(self.f_bytes)  # type: ignore
         
         def stat(self, path: str) -> tuple:
             if not path == self.fname:
@@ -438,7 +478,7 @@ def _boot_mount_payload_fs(mount_pt: str, f_path: str, bin: memoryview[int]) -> 
 
 # Execute a signed firmware file (not a firmware image, just a raw signed .mpy)
 #
-# TODO: Use ECDSA and ASN.1 encode signatures
+# TODO: Add support for ECDSA.
 # NOTE: Pointer erased at boot lockout.
 def _boot_exec_signed_firm(pubkey: RSA, nvs: ReadOnlyNVS, sig: memoryview[int], bin: memoryview[int]) -> bool:
     from binascii import hexlify
@@ -446,20 +486,20 @@ def _boot_exec_signed_firm(pubkey: RSA, nvs: ReadOnlyNVS, sig: memoryview[int], 
     from machine import reset
     from vfs import umount
 
-    logs.print_warning("boot", "BOOTROM DEVELOPMENT MODE: sig checks patched out")
+    #logs.print_warning("boot", "BOOTROM DEVELOPMENT MODE: sig checks patched out")
 
-    # sig_hash = pubkey.pkcs_verify(sig)
+    sig_hash = pubkey.pkcs_verify(sig)
     bin_hash = sha256(bin).digest()
 
     # # Invalid binary; refuse to boot it.
     # TODO: probably vulnerable to timing side channel
-    # if bin_hash != sig_hash:
-    #     return False
+    if bin_hash != sig_hash:
+        return False
 
     del sig
     
     logs.print_info("boot", f"signature valid. booting payload sha256 {hexlify(bin_hash)}")
-    del bin_hash #, sig_hash
+    del bin_hash, sig_hash
 
     gc.collect()
 
