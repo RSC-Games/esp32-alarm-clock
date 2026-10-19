@@ -175,6 +175,8 @@ def compare_digest(a, b, double_hmac=True, digestmod=b"sha256"):
     if len(a) != len(b):
         raise ValueError("This method is only for comparing digests of equal length")
 
+    # TODO: fix for modern micropython (since uos aliases won't work soon)
+    # Nonce generation
     if double_hmac:
         try:
             import uos

@@ -1,6 +1,10 @@
+from ucrypto.hmac import compare_digest
 from ucrypto.ufastrsa.rsa import RSA
+from ucrypto.functools import reduce
 from __nvs_perms import ReadOnlyNVS
 from micropython import const
+from binascii import hexlify
+from hashlib import sha256
 import logs
 
 _PRODUCT_ID = const("esp32_alarm_clock")
@@ -8,10 +12,12 @@ _PID_HEADER = const("RALC")
 _SHARED_KEY_BIN = const(b"")
 _FIRMWARE_PATH = const("clock_firm")
 _VERSION = const(0) # Doesn't change
+_SHARED_KEY_BIN = const(b"")
+_SHARED_KEY_SIG = const(b"")
 _DBX = const(b"")
 _NVS_LOCKOUT = const(0)
 _ENABLE_SD_BOOT = const(0)#const(1)
-_ALLOW_INSECURE_BOOT = const(1)#const(0)
+_ALLOW_INSECURE_BOOT = const(0)
 _BOOT_MPY = const(1)   # Booting a .bin sounds cooler but .mpy is easier to test.
 
 # Load the boot nvs. Key is the device unique id XOR the public key modulus.
@@ -35,7 +41,7 @@ _BOOT_MPY = const(1)   # Booting a .bin sounds cooler but .mpy is easier to test
 # TODO: Write code for generating and embedding the shared key (shared key seed provided
 #   by provisioning tools/full shared key)
 #
-def format_boot_nvs(pubkey: RSA, boot_nvs: ReadOnlyNVS):
+def format_boot_nvs(root_key: RSA, boot_nvs: ReadOnlyNVS):
     # NVS provided by bootrom
     logs.print_info("nvs-init", "setting up boot nvs")
 
@@ -63,11 +69,24 @@ def format_boot_nvs(pubkey: RSA, boot_nvs: ReadOnlyNVS):
         if nvs_lockout != 0:
             logs.print_error("nvs-init", "nvs lock configured; aborting")
             return
+
+    # Shared key
+    if not key_exists("shared_key", boot_nvs.get_blobn):
+        sig_hash = root_key.pkcs_verify(_SHARED_KEY_SIG)
+        bin_hash = sha256(_SHARED_KEY_BIN).digest()
+
+        if not compare_digest(sig_hash, bin_hash):
+            logs.print_error("nvs-init", "key/hash mismatch; aborting")
+            return
+
+        boot_nvs.set_blobn("shared_key", _SHARED_KEY_BIN)
+        boot_nvs.set_blobn("shared_sig", _SHARED_KEY_SIG)
         
     if not key_exists("dbx", boot_nvs.get_blobn):
         boot_nvs.set_blobn("dbx", _DBX)
         
     logs.print_info("nvs-init", f"firm\t\t -> {_FIRMWARE_PATH}")
+    logs.print_info("nvs-init", f"key_sha256\t -> {hexlify(_SHARED_KEY_SIG)}")
     logs.print_info("nvs-init", f"dbx\t\t -> {_DBX}")
     logs.print_info("nvs-init", f"nvs_lock\t -> {_NVS_LOCKOUT}")
     logs.print_info("nvs-init", f"en_sd_boot\t -> {_ENABLE_SD_BOOT}")
@@ -126,14 +145,19 @@ def _sum_cols(nums: str, offset: int) -> int:
     sum = 0
 
     # TODO: functools.reduce?
+    #reduce(lambda a,b : int(a) + int(b), nums[offset::2])
     for i in range(offset, len(nums), 2):
         sum += int(nums[i])
 
     return sum
 
-def firm_entry(pubkey, nvs):
+def firm_entry(root_key: RSA, nvs: ReadOnlyNVS):
+    # NOTE: FatFS had a few CVEs this year that resulted in DoS or potentially arbitrary
+    # code execution.
+    # TODO: Detect these vulnerable micropython versions and refuse to boot/alert the user.
+
     logs.print_warning("nvs-init", "FLASHING NVS")
-    format_boot_nvs(pubkey, nvs)
+    format_boot_nvs(root_key, nvs)
 
     logs.print_warning("nvs-init", "provisioning done. waiting for hw reset")
 
