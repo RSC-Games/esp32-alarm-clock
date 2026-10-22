@@ -34,7 +34,7 @@ class ReadOnlyNVS(NVS):
         return dat
     
     # Helper for easily setting variable-length blobs.
-    def set_blobn(self, flag: str, bin: bytes) -> None:
+    def set_blobn(self, flag: str, bin: bytes | memoryview[int]) -> None:
         self.set_i32(f"l{flag}", len(bin))
         self.set_blob(flag, bin)
     

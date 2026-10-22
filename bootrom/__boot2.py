@@ -28,6 +28,11 @@ import gc
 # for an application where end-user modification is not desirable.
 _FORCE_SIGNATURE_VALIDATION = const(False)
 
+# Require a validly formatted dbx entry to boot the system. If dbx is damaged or corrupted,
+# the system will likely never boot again. However, disabling this allows dbx to be
+# potentially erased and will allow vulnerable payloads to be executed.
+_REQUIRE_VALID_DBX_FOR_BOOT = const(False)
+
 # Force the boot NVS read-only whenever a payload is executed irrespective of the current
 # NVS setting. This does not affect UART/USB recovery mode payloads.
 _FORCE_NVS_LOCKOUT = const(False)
@@ -254,8 +259,6 @@ def _boot_load_shared_key(root_key: RSA, nvs: ReadOnlyNVS) -> RSA | None:
         return None
 
     del sig_hash, bin_hash
-
-    # TODO: test: invalidly formatted signed shared key can force the bootrom into a permanent boot loop.
 
     # ASN.1 format for RSA keys:
     # RSAPublicKey ::= SEQUENCE {
@@ -632,6 +635,42 @@ def _boot_mount_root(root_key: RSA, shared_key: RSA | None, nvs: ReadOnlyNVS, bo
         except OSError:
             logs.print_error("boot", "data partition corrupt/unmountable")
             _fatal_error_led(root_key, shared_key, nvs, 1, 3)
+
+
+# Check a signature against the signature revocation list. If not present,
+# the payload can be booted. If it is, refuse to boot it.
+# This function can also be used for testing keys.
+# Signatures are assumed to be sha256 and thus 32 bytes long.
+#
+# NOTE: Pointer erased at boot lockout.
+@gc_clean
+def _boot_check_dbx(nvs: ReadOnlyNVS, hash: bytes) -> bool:
+    try:
+        dbx = memoryview(nvs.get_blobn("dbx"))
+
+        ldbx = len(dbx)
+        num_sigs, rem = divmod(ldbx, 32)
+
+        if rem != 0:
+            logs.print_error("boot", "dbx corrupted!")
+
+            # remove the most recent (likely damaged) key
+            nvs.set_blobn("dbx", dbx[:num_sigs*32])
+            return not _REQUIRE_VALID_DBX_FOR_BOOT
+
+        for i in range(num_sigs):
+            hash_test = dbx[i*32:(i+1)*32]
+
+            if hash_test == hash:
+                return False # dbx blocked blacklisted binary
+
+        return True
+
+    except OSError:
+        # Can't refuse to boot payloads without a valid dbx or the system will
+        # never boot again after an update failure.
+        logs.print_warning("boot", "dbx not configured; cannot verify safety")
+        return not _REQUIRE_VALID_DBX_FOR_BOOT
     
 
 # Validate the firmware image on disk, and mount it if sig checks passed.
@@ -722,7 +761,10 @@ def _boot_validate_firmware(pubkey: RSA, nvs: ReadOnlyNVS, firm_name: str, sd_bo
             # IMPORTANT: Signature verification done here!!!!!
             hashes_equal = compare_digest(calc_hash, sig_hash)
 
-            # TODO: DBX is not checked. (error flash 2/3, 4)
+            # Make sure signed binary isn't blacklisted.
+            if hashes_equal:
+                hashes_equal = _boot_check_dbx(nvs, sig_hash)
+            
         except:
             logs.print_error("boot", "invalid pkcs1 signature")
             return flashes, 2
@@ -802,6 +844,7 @@ def _boot_lockout(nvs: ReadOnlyNVS, nvs_lockout=True) -> None:
     global _boot_mount_payload_fs
     global _boot_exec_signed_firm
     global _boot_mount_root
+    global _boot_check_dbx
     global _boot_validate_firmware
     global _boot_read_firm_file
     global _boot_lockout
@@ -813,17 +856,18 @@ def _boot_lockout(nvs: ReadOnlyNVS, nvs_lockout=True) -> None:
         raise OSError("called stubbed bootloader function")
 
     # Stub (nearly) everything
-    # _boot_clean_syspath = _boot_func_stub
-    # _boot_load_nvs = _boot_func_stub
-    # _boot_load_shared_key = _boot_func_stub
-    # _boot_launch_uart_rcm = _boot_func_stub
-    # _boot_mount_payload_fs = _boot_func_stub
-    # _boot_exec_signed_firm = _boot_func_stub
-    # _boot_mount_root = _boot_func_stub
-    # _boot_validate_firmware = _boot_func_stub
-    # _boot_read_firm_file = _boot_func_stub
-    # _boot_lockout = _boot_func_stub
-    # boot_main = _boot_func_stub
+    _boot_clean_syspath = _boot_func_stub
+    _boot_load_nvs = _boot_func_stub
+    _boot_load_shared_key = _boot_func_stub
+    _boot_launch_uart_rcm = _boot_func_stub
+    _boot_mount_payload_fs = _boot_func_stub
+    _boot_exec_signed_firm = _boot_func_stub
+    _boot_mount_root = _boot_func_stub
+    _boot_check_dbx = _boot_func_stub
+    _boot_validate_firmware = _boot_func_stub
+    _boot_read_firm_file = _boot_func_stub
+    _boot_lockout = _boot_func_stub
+    boot_main = _boot_func_stub
 
     # Force NVS read-only to all payloads.
     if nvs_lockout and (_FORCE_NVS_LOCKOUT or nvs.get_i32("nvs_lock")):
